@@ -26,6 +26,8 @@ src/input      virtual DualShock 2, bindings, dead zones, hot-plug (SDL-free, un
 src/config     TOML configuration
 src/render     backend-neutral renderer, Null backend, Vulkan backend + shaders
 src/platform   SDL3 window, events, gamepads
+src/iso        read-only ISO9660 reader
+src/ingest     disc identification/extraction + lantern-ingest tool
 src/app        CLI and main loop
 tests/         doctest unit tests + CTest smoke/GPU tests
 scripts/       check.sh (lint + build + tests gate)

@@ -20,7 +20,7 @@ todos:
     status: completed
   - id: s5-ingest
     content: Read-only ISO9660 reader, disc identification (SYSTEM.CNF, hash), extraction to XDG data
-    status: pending
+    status: completed
   - id: s6-analysis
     content: EE ELF parser, function discovery, syscall/IRX/VU-microcode inventory, feasibility report
     status: pending

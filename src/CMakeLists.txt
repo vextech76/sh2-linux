@@ -1,7 +1,15 @@
 # --- core: logging and paths (no third-party deps) ---
-add_library(lantern_core STATIC core/log.cpp core/paths.cpp)
+add_library(lantern_core STATIC core/log.cpp core/paths.cpp core/sha256.cpp)
 target_include_directories(lantern_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lantern_core PRIVATE lantern_warnings)
+
+# --- iso + ingest: read-only disc access, identification, extraction ---
+add_library(lantern_iso STATIC iso/iso9660.cpp)
+target_link_libraries(lantern_iso PUBLIC lantern_core PRIVATE lantern_warnings)
+add_library(lantern_ingest STATIC ingest/disc.cpp)
+target_link_libraries(lantern_ingest PUBLIC lantern_iso PRIVATE lantern_warnings)
+add_executable(lantern-ingest ingest/ingest_main.cpp)
+target_link_libraries(lantern-ingest PRIVATE lantern_ingest lantern_warnings)
 
 # --- input: device-agnostic mapping (no SDL) ---
 add_library(lantern_input STATIC input/pad.cpp input/binding.cpp input/deadzone.cpp input/input_system.cpp)

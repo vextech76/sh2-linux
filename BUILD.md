@@ -50,6 +50,13 @@ build/debug/src/lantern --help
 Exit codes: 0 ok · 1 startup failure (message explains: no GPU, missing loader, ...) ·
 2 usage/config/path-safety error · 3 Vulkan validation errors were reported.
 
+## 5. Ingest your disc (read-only)
+
+```sh
+build/release/src/lantern-ingest identify "/path/to/Silent Hill 2.iso" --hash
+build/release/src/lantern-ingest extract  "/path/to/Silent Hill 2.iso"   # boot set -> ~/.local/share/lantern/extracted/<serial>/
+```
+
 ## Troubleshooting
 
 | Symptom | Fix |

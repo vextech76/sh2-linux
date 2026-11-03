@@ -133,15 +133,32 @@ fragment shader) and the window title *"PLACEHOLDER OUTPUT (no game runtime load
 the only image shown until real GS output exists. It's not game art and never stands in
 for any.
 
-## 7. Asset interfaces ⏳ (Stage 5)
+## 7. Asset interfaces 🟡 (Stage 5: reader/ingest ✅, runtime VFS ⏳)
 
 - `iso::Image` — read-only ISO9660 reader over a file handle (PS2 DVDs are ISO9660 + UDF
   bridge; ISO9660 suffices for file access). No writes; opened `O_RDONLY`.
+- ✅ `lantern-ingest identify|list|extract` (`src/ingest`). `extract` defaults to the *boot set*
+  (SYSTEM.CNF, boot ELF, `*.IRX`, `IOPRP*.IMG`, ~3.7 MB); `--all` copies everything.
 - `ingest` — identify the disc: SHA-256 of the image, `SYSTEM.CNF` → boot ELF name and
   serial, region. Records a manifest; extracts to `$XDG_DATA_HOME/lantern/extracted/<serial>/`.
 - `vfs::Disc` — runtime file access used by the CDVD HLE: serves sector reads/file opens from
   the original ISO (preferred: no duplication) or the extracted tree.
 - Tests use **synthetic** ISO images generated in the test itself — never the real disc.
+
+### 7.1 Findings on the owner's disc (2026-11-03, read-only)
+| Item | Value |
+|---|---|
+| Serial / region | SLUS-20228, NTSC-U, `VER = 1.20`, volume `SILENT_HILL_2__VW047_U1__V1_20` |
+| SHA-256 | `c2306f1bfd576469a5e5ebf99877f6ff260404ab78a6d7b71f9b3fe26aefdef5` (4,641,193,984 bytes) |
+| Boot ELF | `SLUS_202.28`, 3.0 MB, ELF32 MIPS, flags `5900, eabi64, mips3`, entry `0x00100008` |
+| Symbols | effectively none (3-entry symtab, unnamed sections): function discovery must be CFG-based |
+| Layout | main image `0x00100000` (file 0x2E6880, mem 0x1E0BC00 incl. BSS) + **~50 zero-file-size overlay segments all at `0x01F0BC00`** |
+| Overlays (hypothesis) | `GX/ GY/ GZ/*.BIN` (54 small files); several sizes equal overlay segment sizes. To verify in Stage 6. |
+| Data | `DATA/*.MGF` archives (3.1 GB, incl. `MOVIE.MGF` 1.7 GB), `IOP/SOUND/SOUND.DAT` 298 MB, `DATA/DUMMY.DMY` 256 MB padding |
+| IOP | `IOPRP.IMG` + 11 IRX: SIO2MAN, PADMAN, MCMAN, MCSERV, LIBSD, SDRDRV, SDSTR, SD_CD, SD_HD, SOUNDCD, SOUNDHD |
+
+Implication: the recompiler must support **several code images sharing one address range**
+(overlay-ID-qualified functions, dispatch keyed by the currently loaded overlay).
 
 ## 8. Recompilation & PS2 runtime ⏳ / ❓ (Stages 6–9)
 

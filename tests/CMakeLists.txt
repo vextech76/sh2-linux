@@ -17,6 +17,10 @@ lantern_test(test_input_system lantern_input)
 lantern_test(test_config lantern_config)
 lantern_test(test_cli lantern_cli)
 lantern_test(test_null_renderer lantern_render)
+lantern_test(test_iso lantern_iso)
+lantern_test(test_ingest lantern_ingest)
+add_test(NAME smoke_ingest_usage COMMAND lantern-ingest)
+set_tests_properties(smoke_ingest_usage PROPERTIES WILL_FAIL TRUE)
 
 # Smoke tests of the real executable. Each run gets an isolated XDG home so nothing touches
 # the developer's real settings.
