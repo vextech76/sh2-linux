@@ -220,6 +220,34 @@ ee/semantics.h  ◀── single source of truth ──▶ ee/interpreter (refer
   SIF/IOP), DMA/GS/VU1 and the ELF loader/boot path (next stages). Thread switching will require
   host-side coroutines/threads because recompiled code uses the host stack.
 
+### 8.2 Boot path, HLE kernel, SIF (Stage 7b) 🟡
+
+`lantern-boot` loads the boot ELF into guest RAM, `dlopen`s the recompiled game
+(`liblantern_game.so`, built outside git), and runs it on `ps2::Kernel`:
+
+- **Threads** are host coroutines (`ucontext`, 16 MB lazily-committed host stacks) because
+  recompiled code runs on the host stack; the guest register file is swapped on each switch
+  (VU0 is global hardware and is not). Priority scheduling; switches at syscalls and at
+  **loop back-edge safe points** (`rt.tick()` emitted by the recompiler), so busy-wait loops on
+  interrupt-set flags make progress. ASan fiber annotations keep sanitizer builds clean.
+- **Interrupts/alarms**: VBlank at 59.94 Hz (INTC 2/3 handlers, `SetVSyncFlag`), alarms in HSYNC
+  units, DMAC completion handlers; delivered at safe points on a dedicated guest stack in the
+  unused kernel area; `i*` syscalls from handlers defer rescheduling.
+- **Kernel patches**: SCE libkernel's `SetSyscall` patches into kernel memory are ignored (they
+  edit BIOS-internal structures LANTERN doesn't have); user-space handlers are honoured.
+- **Hardware**: timers (counting from host time), INTC/DMAC status semantics, GS CSR field bit,
+  SIF registers (SMFLG write-1-to-clear, IOP reboot re-raises boot flags). DMA to unemulated
+  units completes instantly and is logged as PLACEHOLDER; other registers are stored and listed
+  in the boot report.
+- **SIF HLE** (`src/iop/sif_hle.*`): modelled IOP RAM for EE→IOP DMA, `INIT_CMD`/`SET_SREG`/
+  `RESET`/`RPC_BIND`/`RPC_CALL`/`RPC_RDATA`, replies delivered one packet per SIF0 DMA interrupt
+  into the game's receive buffer so its own libsif handler processes them. RPC servers are
+  pluggable; unknown servers answer with zeros and are reported as PLACEHOLDER.
+
+**Boot status (SLUS-20228):** crt0 → threads/semaphores/handlers → SIF init → CDVD servers
+(0x80000592/593/596/59A) → IOP reset with IOPRP → re-init → LOADFILE (0x80000006); then waits
+for real IOP services (module load results, CD reads).
+
 ## 9. Known limitations / risks
 
 - **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,

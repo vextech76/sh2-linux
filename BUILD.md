@@ -67,9 +67,19 @@ build/release/src/lantern-analyze --extracted ~/.local/share/lantern/extracted/S
 
 ```sh
 build/release/src/lantern-recomp --extracted ~/.local/share/lantern/extracted/SLUS-20228 --iso "/path/to/Silent Hill 2.iso"
-cmake -S ~/.local/share/lantern/recomp/SLUS-20228 -B /tmp/lantern-game -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build /tmp/lantern-game -j"$(nproc)"     # -> liblantern_game.a (not runnable yet: no HLE kernel)
+cmake -S ~/.local/share/lantern/recomp/SLUS-20228 -B ~/.local/share/lantern/recomp/SLUS-20228/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/.local/share/lantern/recomp/SLUS-20228/build   # -> liblantern_game.so (run with lantern-boot)
 ```
+
+## 8. Boot (headless, development)
+
+```sh
+G=~/.local/share/lantern/recomp/SLUS-20228
+cmake -S $G -B $G/build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build $G/build   # liblantern_game.so
+build/release/src/lantern-boot --extracted ~/.local/share/lantern/extracted/SLUS-20228 \
+                               --iso "/path/to/Silent Hill 2.iso" --seconds 20
+```
+Prints a boot report: outcome, syscalls, threads, RPC servers used, unmodelled hardware.
 
 Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
 

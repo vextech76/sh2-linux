@@ -23,6 +23,8 @@ lantern_test(test_r5900 lantern_ee)
 lantern_test(test_analysis lantern_analysis)
 lantern_test(test_interpreter lantern_ee)
 lantern_test(test_semantics_ext lantern_ee)
+lantern_test(test_kernel lantern_ps2)
+lantern_test(test_sif lantern_ps2)
 
 # Recompiler differential test: generate C++ from synthetic programs at build time, compile it,
 # and compare against the interpreter. Generated code is built like real recompiled output:

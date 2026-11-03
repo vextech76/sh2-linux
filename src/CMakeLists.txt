@@ -33,6 +33,13 @@ add_executable(lantern-recomp recomp/recomp_main.cpp)
 target_compile_definitions(lantern-recomp PRIVATE LANTERN_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(lantern-recomp PRIVATE lantern_recomp lantern_iso lantern_warnings)
 
+# --- ps2: HLE kernel, EE hardware registers, boot ---
+add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp iop/sif_hle.cpp)
+target_link_libraries(lantern_ps2 PUBLIC lantern_recomp_runtime lantern_analysis PRIVATE lantern_warnings)
+add_executable(lantern-boot ps2/boot_main.cpp)
+set_target_properties(lantern-boot PROPERTIES ENABLE_EXPORTS ON)  # the dlopen'ed game library links against the runtime
+target_link_libraries(lantern-boot PRIVATE lantern_ps2 lantern_iso ${CMAKE_DL_LIBS} lantern_warnings)
+
 # --- input: device-agnostic mapping (no SDL) ---
 add_library(lantern_input STATIC input/pad.cpp input/binding.cpp input/deadzone.cpp input/input_system.cpp)
 target_link_libraries(lantern_input PUBLIC lantern_core PRIVATE lantern_warnings)

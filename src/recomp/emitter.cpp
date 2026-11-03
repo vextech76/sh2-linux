@@ -82,9 +82,11 @@ struct FunctionEmitter {
   }
 
   // Transfer control to `target` (outside-or-inside the function) as a jump.
-  std::string goto_or_tail(uint32_t target) {
+  std::string goto_or_tail(uint32_t target, uint32_t from_pc = 0) {
     if (inside(target)) {
       labels.insert(target);
+      // Loop back-edge: give the kernel a safe point (interrupts, preemption).
+      if (from_pc && target <= from_pc) return std::format("rt.tick(); goto L_{:08x};", target);
       return std::format("goto L_{:08x};", target);
     }
     if (known.contains(target)) return std::format("return {}(c, m, rt);", function_symbol(target, overlay));
@@ -162,13 +164,13 @@ struct FunctionEmitter {
           call_known_or_dispatch(pc, std::format("0x{:08x}u", in.target), in.target);
           line(std::format("goto L_{:08x};", pc + 8));
         } else {
-          line(goto_or_tail(in.target));
+          line(goto_or_tail(in.target, pc));
         }
         line("}");
         line(std::format("goto L_{:08x};", pc + 8));
       } else if (in.op == Op::J) {
         plain(slot);
-        line(goto_or_tail(in.target));
+        line(goto_or_tail(in.target, pc));
       } else if (in.op == Op::JAL) {
         line(std::format("c.r(31) = 0x{:08x}u;", pc + 8));
         plain(slot);

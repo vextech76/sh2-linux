@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -48,6 +49,13 @@ class Runtime {
 
   const Stats& stats() const { return stats_; }
 
+  // Safe point emitted on every loop back-edge. Every 1024 ticks the hook (the kernel) may
+  // deliver interrupts or switch threads, so guest busy-wait loops make progress.
+  void set_tick_hook(std::function<void()> hook) { tick_hook_ = std::move(hook); }
+  void tick() {
+    if ((++ticks_ & 1023) == 0 && tick_hook_) tick_hook_();
+  }
+
  private:
   std::unordered_map<uint32_t, GuestFn> main_;
   std::unordered_map<int, std::unordered_map<uint32_t, GuestFn>> overlays_;
@@ -57,6 +65,8 @@ class Runtime {
   ee::Interpreter interp_;
   bool interp_hooked_ = false;
   Stats stats_;
+  std::function<void()> tick_hook_;
+  uint64_t ticks_ = 0;
 };
 
 }  // namespace lantern::recomp
