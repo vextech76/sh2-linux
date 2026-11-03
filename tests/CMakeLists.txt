@@ -18,6 +18,19 @@ lantern_test(test_config lantern_config)
 lantern_test(test_cli lantern_cli)
 lantern_test(test_null_renderer lantern_render)
 lantern_test(test_iso lantern_iso)
+lantern_test(test_elf lantern_ee)
+lantern_test(test_r5900 lantern_ee)
+
+# Optional differential test against GNU binutils (sudo dnf install binutils-mips64-linux-gnu).
+find_program(MIPS_OBJDUMP mips64-linux-gnu-objdump)
+find_package(Python3 COMPONENTS Interpreter)
+if(MIPS_OBJDUMP AND Python3_FOUND)
+  add_test(NAME oracle_r5900_sweep COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/scripts/r5900_oracle_diff.py
+           $<TARGET_FILE:lantern-disasm>)
+  add_test(NAME oracle_r5900_random COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/scripts/r5900_oracle_diff.py
+           $<TARGET_FILE:lantern-disasm> --random 300000)
+  set_tests_properties(oracle_r5900_sweep oracle_r5900_random PROPERTIES LABELS oracle)
+endif()
 lantern_test(test_ingest lantern_ingest)
 add_test(NAME smoke_ingest_usage COMMAND lantern-ingest)
 set_tests_properties(smoke_ingest_usage PROPERTIES WILL_FAIL TRUE)

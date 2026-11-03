@@ -11,6 +11,12 @@ target_link_libraries(lantern_ingest PUBLIC lantern_iso PRIVATE lantern_warnings
 add_executable(lantern-ingest ingest/ingest_main.cpp)
 target_link_libraries(lantern-ingest PRIVATE lantern_ingest lantern_warnings)
 
+# --- ee: R5900 decoding, ELF loading (shared by analysis tools and the recompiler) ---
+add_library(lantern_ee STATIC ee/elf.cpp ee/r5900.cpp)
+target_link_libraries(lantern_ee PUBLIC lantern_core PRIVATE lantern_warnings)
+add_executable(lantern-disasm ee/disasm_main.cpp)
+target_link_libraries(lantern-disasm PRIVATE lantern_ee lantern_warnings)
+
 # --- input: device-agnostic mapping (no SDL) ---
 add_library(lantern_input STATIC input/pad.cpp input/binding.cpp input/deadzone.cpp input/input_system.cpp)
 target_link_libraries(lantern_input PUBLIC lantern_core PRIVATE lantern_warnings)
