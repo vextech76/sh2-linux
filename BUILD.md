@@ -1,0 +1,60 @@
+# Building and running LANTERN (Linux)
+
+Tested on Fedora 44 (x86_64, GCC 16, Mesa RADV). Other distributions need the equivalent packages.
+
+## 1. Dependencies
+
+```sh
+sudo dnf install -y gcc-c++ libasan libubsan cmake ninja-build \
+  SDL3-devel vulkan-headers vulkan-loader-devel vulkan-validation-layers glslc \
+  tomlplusplus-devel doctest-devel clang-tools-extra
+```
+
+Debian/Ubuntu equivalents: `g++ cmake ninja-build libsdl3-dev libvulkan-dev
+vulkan-validationlayers glslc libtomlplusplus-dev doctest-dev clang-format`.
+
+You need a GPU and driver with **Vulkan 1.3** (dynamic rendering + synchronization2).
+Check it with `vulkaninfo --summary`, or `lantern --list-gpus` once you've built LANTERN.
+
+## 2. Build
+
+```sh
+cmake --preset debug          # -Werror, AddressSanitizer + UBSan, validation layers auto-on
+cmake --build --preset debug
+# or optimised:
+cmake --preset release && cmake --build --preset release
+```
+
+Output: `build/<preset>/src/lantern`. In-source builds are rejected.
+
+## 3. Test
+
+```sh
+ctest --preset debug          # unit + headless smoke tests (no GPU/display needed)
+ctest --preset debug-gpu      # Vulkan tests: needs a display; runs with validation on
+scripts/check.sh [--gpu]      # full gate: clang-format check, build, tests
+```
+
+The tests use their own temporary XDG directories, so your real settings are never touched.
+
+## 4. Run
+
+```sh
+build/debug/src/lantern                     # window with the PLACEHOLDER pattern (no game runtime yet)
+build/debug/src/lantern --list-gpus         # device suitability report
+build/debug/src/lantern --print-config      # effective configuration
+build/debug/src/lantern --backend null --frames 60   # headless
+build/debug/src/lantern --help
+```
+
+Exit codes: 0 ok · 1 startup failure (message explains: no GPU, missing loader, ...) ·
+2 usage/config/path-safety error · 3 Vulkan validation errors were reported.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `validation requested but VK_LAYER_KHRONOS_validation is not installed` | `sudo dnf install vulkan-validation-layers` |
+| `no suitable Vulkan GPU found` + per-device reasons | update Mesa/NVIDIA driver; pick another with `preferred_gpu` |
+| `SDL_Init failed` | run from a graphical session (X11/Wayland), or use `--backend null` |
+| Wrong GPU on hybrid laptop | `preferred_gpu = "7600M"` in config, see `--list-gpus` |

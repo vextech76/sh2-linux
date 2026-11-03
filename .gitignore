@@ -1,0 +1,23 @@
+# Generated build output
+/build/
+compile_commands.json
+.cache/
+
+# Game data and anything derived from it must never be committed.
+*.iso
+*.bin
+*.img
+*.elf
+*.IRX
+*.irx
+/extracted/
+/game/
+/recomp_out/
+scph*
+SLUS_*
+SLES_*
+SLPM_*
+
+# Local user settings (real settings live in $XDG_CONFIG_HOME/lantern)
+config.toml
+!tests/data/**/config.toml
