@@ -26,7 +26,7 @@ todos:
     status: completed
   - id: s7-recomp-runtime
     content: R5900 -> C++ translator, memory map, HLE kernel/SIF, pad/cdvd/memcard IOP HLE
-    status: pending
+    status: in_progress
   - id: s8-gs-vu1
     content: VU1 interpreter, GIF/GS translator onto the renderer abstraction
     status: pending
@@ -98,5 +98,9 @@ BIOS LLE.
 - **D-6.1 Hybrid IOP** (Stage 6 finding) — HLE SCE modules at SIF-RPC level; interpret the
   game's own Konami sound modules (R3000A + IOP-kernel HLE + SPU2) instead of reverse-engineering
   their private protocol. See docs/ANALYSIS.md §6.
+- **Shared semantics header** (Stage 7) — interpreter and recompiled code call identical inline
+  functions; differential tests then only need to cover control flow and dispatch.
+- **Trap, don't guess** — unknown call targets, non-standard returns, unrecovered jump-table
+  targets and unimplemented instructions raise `GuestTrap` with the guest PC.
 - **Overlay-aware recompilation** — 54 overlays share 0x01F0BC00; functions are identified by
   (overlay, address) and indirect dispatch consults the loaded overlay.

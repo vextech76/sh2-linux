@@ -171,7 +171,7 @@ the **IOP** (R3000A running IRX modules: pad, CDVD, memcard, sound), **SPU2** au
 1. ✅ **Analysis** (Stage 6, findings in [ANALYSIS.md](ANALYSIS.md)): parse the boot ELF; recover functions (symbols if present, else
    control-flow discovery), syscalls used, IRX modules loaded, VU microcode blobs, jump
    tables. Output: a report + a TOML function/config map consumed by the recompiler.
-2. **EE recompiler** (Stage 7): per-function translation of R5900 code to C++ operating on a
+2. 🟡 **EE recompiler** (Stage 7 — core done, see §8.1): per-function translation of R5900 code to C++ operating on a
    `Cpu` context (128-bit GPRs, HI/LO pairs, FPU with PS2 rounding/clamping), guest memory via
    a 32 MB RDRAM array + MMIO dispatch. Indirect jumps go through a dispatch table;
    un-translated targets trap with the guest PC (never silently skipped). Generated code lands
@@ -187,10 +187,45 @@ the **IOP** (R3000A running IRX modules: pad, CDVD, memcard, sound), **SPU2** au
    renderer abstraction gains texture/target/batch APIs.
 5. **SPU2 → SDL audio; IPU → FMV decode** (Stage 9).
 
+### 8.1 Recompiler core (Stage 7) ✅
+
+```
+analysis (functions, jump tables) ──▶ emitter ──▶ C++ (one call per instruction into sem::)
+                                                         │
+ee/semantics.h  ◀── single source of truth ──▶ ee/interpreter (reference + fallback)
+```
+
+- **Shared semantics** (`src/ee/semantics.h`, `semantics_vu0.h`): every non-control-flow
+  instruction is an inline `sem::OP(Cpu&, Memory&, word, pc)`. Recompiled code passes a constant
+  `word`, so field decoding folds away; the interpreter calls the same functions. The op set is
+  defined once (`semantics_ops.h`); a test asserts every decodable opcode is either implemented,
+  control flow, or explicitly deferred (kernel-mode TLB/BC0/ERET).
+- **Coverage on SLUS-20228:** 7,888 functions (main + 54 overlays), 514,628 instructions:
+  integer, 64-bit, MMI (complete), FPU (PS2 clamping rules), VU0 macro mode (complete incl. flags,
+  clip, Q/I/R, VU0 data memory). Remaining runtime traps: 12 `vcallms` (VU0 micro mode — Stage 8),
+  1 `jalr` with a non-`$ra` link, 1 invalid word on a reached path.
+- **Control flow:** branch conditions are evaluated before the delay slot; likely branches only run
+  the slot when taken; `jal` to a known function is a direct C++ call checked against the expected
+  return address (mismatch → loud trap); `jalr`/unknown targets go through `recomp::Runtime`
+  (address → function map, overlay-aware, optional interpreter fallback); resolved jump tables
+  become `switch` statements with a trapping default.
+- **Verification:** 66 synthetic programs (2 hand-written + 64 random covering ALU/MMI/FPU/memory,
+  likely branches, loops, calls) are recompiled at build time and must match the interpreter
+  bit-for-bit (all GPRs/HI/LO/FPU/memory). A mutation check confirmed the test detects emitter bugs.
+- **Real output:** `lantern-recomp` writes the game's C++ + a CMake project to
+  `$XDG_DATA_HOME/lantern/recomp/SLUS-20228/` (never in git); it compiles to a ~23 MB static
+  library in ~35 s on 16 cores. Generated code must be built with `-ffp-contract=off` so float
+  results match the interpreter.
+- **Not yet:** the runtime cannot *run* the game — that needs the HLE kernel (threads, interrupts,
+  SIF/IOP), DMA/GS/VU1 and the ELF loader/boot path (next stages). Thread switching will require
+  host-side coroutines/threads because recompiled code uses the host stack.
+
 ## 9. Known limitations / risks
 
-- **No game runs yet.** Stages 1–4 (platform, input, config, Vulkan) are complete; the game
-  runtime is the hard part (multi-month research). This doc will be updated with findings.
+- **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,
+  analysis, recompiler); the HLE kernel, IOP, VU1/GS and audio remain.
+- FPU/VU float behaviour approximates PS2 rules (clamp instead of inf/NaN, flush denormals); exact
+  rounding differences vs. hardware are not yet verified against a reference.
 - SH2 relies heavily on VU1 microcode and GS behaviours (fog, effects, framebuffer feedback);
   high accuracy GS translation is the largest technical risk.
 - Timing-sensitive code (VSync interrupts, DMA completion) needs an event scheduler; behaviour

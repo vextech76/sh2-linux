@@ -44,6 +44,17 @@ struct Cpu {
 
   uint32_t cop0[32]{};
 
+  // VU0 as seen from the EE in macro mode (COP2).
+  struct Vu0 {
+    Reg128 vf[32]{};    // float vectors as raw bits; vf0 = (0, 0, 0, 1.0f) and is read-only
+    uint16_t vi[16]{};  // integer registers; vi0 = 0 and is read-only
+    uint32_t acc[4]{};  // accumulator (raw float bits)
+    uint32_t q = 0, p = 0, i = 0, r = 0x3F800000;
+    uint32_t mac = 0, status = 0, clip = 0;
+    uint8_t mem[4096]{};  // VU0 data memory (VLQI/VSQI/VILWR/VISWR)
+    Vu0() { vf[0].u32[3] = 0x3F800000; }
+  } vu0;
+
   uint64_t& r(unsigned i) { return gpr[i].u64[0]; }
   uint64_t r(unsigned i) const { return gpr[i].u64[0]; }
 };

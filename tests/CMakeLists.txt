@@ -22,6 +22,7 @@ lantern_test(test_elf lantern_ee)
 lantern_test(test_r5900 lantern_ee)
 lantern_test(test_analysis lantern_analysis)
 lantern_test(test_interpreter lantern_ee)
+lantern_test(test_semantics_ext lantern_ee)
 
 # Recompiler differential test: generate C++ from synthetic programs at build time, compile it,
 # and compare against the interpreter. Generated code is built like real recompiled output:
@@ -36,7 +37,8 @@ add_library(recomp_selftest_code STATIC ${SELFTEST_GEN})
 target_link_libraries(recomp_selftest_code PUBLIC lantern_recomp_runtime)
 target_compile_options(recomp_selftest_code PRIVATE -ffp-contract=off -Wno-unused-label)
 lantern_test(test_recomp lantern_recomp_runtime recomp_selftest_code)
-target_compile_options(test_recomp PRIVATE -ffp-contract=off)
+# GCC 16 -O2 false positive in std::vector initializer-list copies (recomp_programs.h).
+target_compile_options(test_recomp PRIVATE -ffp-contract=off -Wno-array-bounds)
 
 # Optional differential test against GNU binutils (sudo dnf install binutils-mips64-linux-gnu).
 find_program(MIPS_OBJDUMP mips64-linux-gnu-objdump)

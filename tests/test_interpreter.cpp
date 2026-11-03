@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <bit>
+#include <set>
 #include <vector>
 
 #include "ee/interpreter.h"
@@ -220,4 +221,21 @@ TEST_CASE("MMI lanes and QFSRV funnel shift") {
   CHECK(m.cpu.gpr[t1].u32[1] == 1);  // rs lane 0
   // rs:rt shifted right by 3 bytes: low 8 bytes are rt bytes 3..10.
   CHECK(m.cpu.gpr[t2].u64[0] == 0xBBAA998877665544ull);
+}
+
+TEST_CASE("every decodable opcode has semantics, is control flow, or is explicitly deferred") {
+  // Deferred on purpose: kernel-mode TLB/COP0-branch ops (handled by the HLE kernel, never
+  // expected in game code) and ERET.
+  const std::set<Op> deferred = {Op::Invalid, Op::BC0F,  Op::BC0T,  Op::BC0FL, Op::BC0TL,
+                                 Op::TLBR,    Op::TLBWI, Op::TLBWR, Op::TLBP,  Op::ERET};
+  const std::set<Op> control = {Op::J,     Op::JAL,   Op::JR,     Op::JALR,   Op::BEQ,     Op::BNE,     Op::BLEZ,
+                                Op::BGTZ,  Op::BLTZ,  Op::BGEZ,   Op::BEQL,   Op::BNEL,    Op::BLEZL,   Op::BGTZL,
+                                Op::BLTZL, Op::BGEZL, Op::BLTZAL, Op::BGEZAL, Op::BLTZALL, Op::BGEZALL, Op::BC1F,
+                                Op::BC1T,  Op::BC1FL, Op::BC1TL,  Op::BC2F,   Op::BC2T,    Op::BC2FL,   Op::BC2TL};
+  for (size_t i = 0; i < static_cast<size_t>(Op::Count); ++i) {
+    const Op op = static_cast<Op>(i);
+    INFO(mnemonic(op));
+    CHECK((has_semantics(op) || control.contains(op) || deferred.contains(op)));
+    CHECK_FALSE((has_semantics(op) && control.contains(op)));
+  }
 }

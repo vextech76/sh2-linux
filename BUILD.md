@@ -63,6 +63,14 @@ build/release/src/lantern-ingest extract  "/path/to/Silent Hill 2.iso"   # boot 
 build/release/src/lantern-analyze --extracted ~/.local/share/lantern/extracted/SLUS-20228 --iso "/path/to/Silent Hill 2.iso"
 ```
 
+## 7. Recompile (writes only to ~/.local/share/lantern/recomp/)
+
+```sh
+build/release/src/lantern-recomp --extracted ~/.local/share/lantern/extracted/SLUS-20228 --iso "/path/to/Silent Hill 2.iso"
+cmake -S ~/.local/share/lantern/recomp/SLUS-20228 -B /tmp/lantern-game -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/lantern-game -j"$(nproc)"     # -> liblantern_game.a (not runnable yet: no HLE kernel)
+```
+
 Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
 
 ## Troubleshooting

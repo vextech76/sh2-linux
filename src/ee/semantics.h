@@ -9,7 +9,10 @@
 // sign-extended to 64 bits; $zero is never written. FPU follows PS2 rules approximately:
 // no infinities/NaNs (results clamp to +-FLT_MAX), denormals flush to zero.
 
+#include <algorithm>
+#include <array>
 #include <bit>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -587,6 +590,303 @@ LANTERN_SEM(QFSRV) {  // funnel shift right of rs:rt by SA bits
   set128(c, rd(w), o);
 }
 
+// ---- MMI: saturating arithmetic --------------------------------------------------------------
+template <typename T, typename W>
+constexpr T sat(W v) {
+  return static_cast<T>(
+      std::clamp<W>(v, static_cast<W>(std::numeric_limits<T>::min()), static_cast<W>(std::numeric_limits<T>::max())));
+}
+#define LANTERN_PSAT(name, field, n, T, W, op)                                                                   \
+  LANTERN_SEM(name) {                                                                                            \
+    lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {                                                \
+      for (int i = 0; i < n; ++i) o.field[i] = sat<T>(static_cast<W>(a.field[i]) op static_cast<W>(b.field[i])); \
+    });                                                                                                          \
+  }
+LANTERN_PSAT(PADDSW, s32, 4, int32_t, int64_t, +)
+LANTERN_PSAT(PSUBSW, s32, 4, int32_t, int64_t, -)
+LANTERN_PSAT(PADDSH, s16, 8, int16_t, int32_t, +)
+LANTERN_PSAT(PSUBSH, s16, 8, int16_t, int32_t, -)
+LANTERN_PSAT(PADDSB, s8, 16, int8_t, int32_t, +)
+LANTERN_PSAT(PSUBSB, s8, 16, int8_t, int32_t, -)
+LANTERN_PSAT(PADDUW, u32, 4, uint32_t, int64_t, +)
+LANTERN_PSAT(PSUBUW, u32, 4, uint32_t, int64_t, -)
+LANTERN_PSAT(PADDUH, u16, 8, uint16_t, int32_t, +)
+LANTERN_PSAT(PSUBUH, u16, 8, uint16_t, int32_t, -)
+LANTERN_PSAT(PADDUB, u8, 16, uint8_t, int32_t, +)  // `paddub rd,rs,$zero` is GCC's 128-bit move
+LANTERN_PSAT(PSUBUB, u8, 16, uint8_t, int32_t, -)
+#undef LANTERN_PSAT
+
+LANTERN_SEM(PABSW) {
+  Reg128 b = c.gpr[rt(w)], o;
+  for (int i = 0; i < 4; ++i) o.s32[i] = b.s32[i] == INT32_MIN ? INT32_MAX : (b.s32[i] < 0 ? -b.s32[i] : b.s32[i]);
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PABSH) {
+  Reg128 b = c.gpr[rt(w)], o;
+  for (int i = 0; i < 8; ++i)
+    o.s16[i] = b.s16[i] == INT16_MIN ? INT16_MAX : static_cast<int16_t>(b.s16[i] < 0 ? -b.s16[i] : b.s16[i]);
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PADSBH) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 4; ++i) o.u16[i] = static_cast<uint16_t>(a.u16[i] - b.u16[i]);
+    for (int i = 4; i < 8; ++i) o.u16[i] = static_cast<uint16_t>(a.u16[i] + b.u16[i]);
+  });
+}
+
+// ---- MMI: pack / interleave / permute ---------------------------------------------------------
+LANTERN_SEM(PEXTUH) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 4; ++i) {
+      o.u16[2 * i] = b.u16[4 + i];
+      o.u16[2 * i + 1] = a.u16[4 + i];
+    }
+  });
+}
+LANTERN_SEM(PEXTUB) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 8; ++i) {
+      o.u8[2 * i] = b.u8[8 + i];
+      o.u8[2 * i + 1] = a.u8[8 + i];
+    }
+  });
+}
+LANTERN_SEM(PPACH) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 4; ++i) {
+      o.u16[i] = b.u16[2 * i];
+      o.u16[4 + i] = a.u16[2 * i];
+    }
+  });
+}
+LANTERN_SEM(PPACB) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 8; ++i) {
+      o.u8[i] = b.u8[2 * i];
+      o.u8[8 + i] = a.u8[2 * i];
+    }
+  });
+}
+LANTERN_SEM(PINTH) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 4; ++i) {
+      o.u16[2 * i] = b.u16[i];
+      o.u16[2 * i + 1] = a.u16[4 + i];
+    }
+  });
+}
+LANTERN_SEM(PINTEH) {
+  lanes(c, w, [](const Reg128& a, const Reg128& b, Reg128& o) {
+    for (int i = 0; i < 4; ++i) {
+      o.u16[2 * i] = b.u16[2 * i];
+      o.u16[2 * i + 1] = a.u16[2 * i];
+    }
+  });
+}
+template <size_t N>
+inline void permute16(Cpu& c, uint32_t w, const std::array<int, N>& idx) {
+  const Reg128 b = c.gpr[rt(w)];
+  Reg128 o;
+  for (size_t i = 0; i < N; ++i) {
+    if constexpr (N == 8)
+      o.u16[i] = b.u16[idx[i]];
+    else
+      o.u32[i] = b.u32[idx[i]];
+  }
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PEXEH) { permute16<8>(c, w, {2, 1, 0, 3, 6, 5, 4, 7}); }
+LANTERN_SEM(PREVH) { permute16<8>(c, w, {3, 2, 1, 0, 7, 6, 5, 4}); }
+LANTERN_SEM(PEXCH) { permute16<8>(c, w, {0, 2, 1, 3, 4, 6, 5, 7}); }
+LANTERN_SEM(PEXEW) { permute16<4>(c, w, {2, 1, 0, 3}); }
+LANTERN_SEM(PEXCW) { permute16<4>(c, w, {0, 2, 1, 3}); }
+LANTERN_SEM(PROT3W) { permute16<4>(c, w, {1, 2, 0, 3}); }
+LANTERN_SEM(PEXT5) {  // 1:5:5:5 -> 8:8:8:8 per word
+  const Reg128 b = c.gpr[rt(w)];
+  Reg128 o;
+  for (int i = 0; i < 4; ++i) {
+    const uint32_t x = b.u32[i];
+    o.u32[i] = ((x & 0x1F) << 3) | ((x & 0x3E0) << 6) | ((x & 0x7C00) << 9) | ((x & 0x8000) << 16);
+  }
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PPAC5) {  // 8:8:8:8 -> 1:5:5:5 per word
+  const Reg128 b = c.gpr[rt(w)];
+  Reg128 o;
+  for (int i = 0; i < 4; ++i) {
+    const uint32_t x = b.u32[i];
+    o.u32[i] = ((x >> 3) & 0x1F) | ((x >> 6) & 0x3E0) | ((x >> 9) & 0x7C00) | ((x >> 16) & 0x8000);
+  }
+  set128(c, rd(w), o);
+}
+
+// ---- MMI: variable word shifts on words 0 and 2 (results sign-extended per doubleword) --------
+#define LANTERN_PVSHIFT(name, expr)                  \
+  LANTERN_SEM(name) {                                \
+    const Reg128 a = c.gpr[rs(w)], b = c.gpr[rt(w)]; \
+    Reg128 o;                                        \
+    for (int i = 0; i < 2; ++i) {                    \
+      const uint32_t x = b.u32[2 * i];               \
+      const unsigned s = a.u32[2 * i] & 31;          \
+      o.u64[i] = sx32(static_cast<uint32_t>(expr));  \
+    }                                                \
+    set128(c, rd(w), o);                             \
+  }
+LANTERN_PVSHIFT(PSLLVW, x << s)
+LANTERN_PVSHIFT(PSRLVW, x >> s)
+LANTERN_PVSHIFT(PSRAVW, static_cast<int32_t>(x) >> s)
+#undef LANTERN_PVSHIFT
+
+// ---- MMI: parallel multiply / divide using both HI/LO pipelines -------------------------------
+inline void pmul_w(Cpu& c, uint32_t w, bool is_signed, int acc_sign) {
+  const Reg128 a = c.gpr[rs(w)], b = c.gpr[rt(w)];
+  Reg128 o;
+  for (int i = 0; i < 2; ++i) {
+    const int k = 2 * i;
+    uint64_t p = is_signed ? static_cast<uint64_t>(static_cast<int64_t>(a.s32[k]) * b.s32[k])
+                           : static_cast<uint64_t>(a.u32[k]) * b.u32[k];
+    if (acc_sign) {
+      const uint64_t acc = static_cast<uint64_t>(c.hi.u32[k]) << 32 | c.lo.u32[k];
+      p = acc_sign > 0 ? acc + p : acc - p;
+    }
+    c.lo.u64[i] = sx32(static_cast<uint32_t>(p));
+    c.hi.u64[i] = sx32(static_cast<uint32_t>(p >> 32));
+    o.u64[i] = p;
+  }
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMULTW) { pmul_w(c, w, true, 0); }
+LANTERN_SEM(PMULTUW) { pmul_w(c, w, false, 0); }
+LANTERN_SEM(PMADDW) { pmul_w(c, w, true, 1); }
+LANTERN_SEM(PMSUBW) { pmul_w(c, w, true, -1); }
+LANTERN_SEM(PMADDUW) { pmul_w(c, w, false, 1); }
+LANTERN_SEM(PDIVW) {
+  const Reg128 a = c.gpr[rs(w)], b = c.gpr[rt(w)];
+  for (int i = 0; i < 2; ++i) {
+    const int32_t n = a.s32[2 * i], d = b.s32[2 * i];
+    if (d == 0)
+      put_hilo(c, i, n < 0 ? 1u : 0xFFFFFFFFu, static_cast<uint32_t>(n));
+    else if (n == INT32_MIN && d == -1)
+      put_hilo(c, i, 0x80000000u, 0);
+    else
+      put_hilo(c, i, static_cast<uint32_t>(n / d), static_cast<uint32_t>(n % d));
+  }
+}
+LANTERN_SEM(PDIVUW) {
+  const Reg128 a = c.gpr[rs(w)], b = c.gpr[rt(w)];
+  for (int i = 0; i < 2; ++i) {
+    const uint32_t n = a.u32[2 * i], d = b.u32[2 * i];
+    if (d == 0)
+      put_hilo(c, i, 0xFFFFFFFFu, n);
+    else
+      put_hilo(c, i, n / d, n % d);
+  }
+}
+LANTERN_SEM(PDIVBW) {
+  const Reg128 a = c.gpr[rs(w)];
+  const int32_t d = c.gpr[rt(w)].s16[0];
+  for (int i = 0; i < 4; ++i) {
+    const int32_t n = a.s32[i];
+    if (d == 0) {
+      c.lo.s32[i] = n < 0 ? 1 : -1;
+      c.hi.s32[i] = n;
+    } else if (n == INT32_MIN && d == -1) {
+      c.lo.s32[i] = INT32_MIN;
+      c.hi.s32[i] = 0;
+    } else {
+      c.lo.s32[i] = n / d;
+      c.hi.s32[i] = n % d;
+    }
+  }
+}
+// Halfword multiplies: products p0..p7 (signed 16x16 -> 32).
+inline std::array<int32_t, 8> hprod(const Cpu& c, uint32_t w) {
+  std::array<int32_t, 8> p{};
+  for (int i = 0; i < 8; ++i) p[i] = static_cast<int32_t>(c.gpr[rs(w)].s16[i]) * c.gpr[rt(w)].s16[i];
+  return p;
+}
+inline void hmul(Cpu& c, uint32_t w, int acc_sign) {
+  const auto p = hprod(c, w);
+  static constexpr int lo_idx[4] = {0, 1, 4, 5}, hi_idx[4] = {2, 3, 6, 7};
+  for (int i = 0; i < 4; ++i) {
+    const auto pl = static_cast<uint32_t>(p[lo_idx[i]]), ph = static_cast<uint32_t>(p[hi_idx[i]]);
+    c.lo.u32[i] = acc_sign == 0 ? pl : acc_sign > 0 ? c.lo.u32[i] + pl : c.lo.u32[i] - pl;
+    c.hi.u32[i] = acc_sign == 0 ? ph : acc_sign > 0 ? c.hi.u32[i] + ph : c.hi.u32[i] - ph;
+  }
+  Reg128 o;
+  o.u32[0] = c.lo.u32[0];
+  o.u32[1] = c.hi.u32[0];
+  o.u32[2] = c.lo.u32[2];
+  o.u32[3] = c.hi.u32[2];
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMULTH) { hmul(c, w, 0); }
+LANTERN_SEM(PMADDH) { hmul(c, w, 1); }
+LANTERN_SEM(PMSUBH) { hmul(c, w, -1); }
+inline void hpair(Cpu& c, uint32_t w, bool sub) {
+  const auto p = hprod(c, w);
+  auto f = [&](int hi_i, int lo_i) { return static_cast<uint32_t>(sub ? p[hi_i] - p[lo_i] : p[hi_i] + p[lo_i]); };
+  c.lo.u32[0] = f(1, 0);
+  c.hi.u32[0] = f(3, 2);
+  c.lo.u32[2] = f(5, 4);
+  c.hi.u32[2] = f(7, 6);
+  Reg128 o;
+  o.u32[0] = c.lo.u32[0];
+  o.u32[1] = c.hi.u32[0];
+  o.u32[2] = c.lo.u32[2];
+  o.u32[3] = c.hi.u32[2];
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PHMADH) { hpair(c, w, false); }
+LANTERN_SEM(PHMSBH) { hpair(c, w, true); }
+
+// ---- MMI: HI/LO transfers --------------------------------------------------------------------
+LANTERN_SEM(PMFHL_LW) {
+  Reg128 o;
+  o.u32[0] = c.lo.u32[0];
+  o.u32[1] = c.hi.u32[0];
+  o.u32[2] = c.lo.u32[2];
+  o.u32[3] = c.hi.u32[2];
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMFHL_UW) {
+  Reg128 o;
+  o.u32[0] = c.lo.u32[1];
+  o.u32[1] = c.hi.u32[1];
+  o.u32[2] = c.lo.u32[3];
+  o.u32[3] = c.hi.u32[3];
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMFHL_SLW) {
+  Reg128 o;
+  for (int i = 0; i < 2; ++i) {
+    const int64_t v = static_cast<int64_t>(static_cast<uint64_t>(c.hi.u32[2 * i]) << 32 | c.lo.u32[2 * i]);
+    o.s64[i] = sat<int32_t>(v);
+  }
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMFHL_LH) {
+  Reg128 o;
+  const uint16_t v[8] = {c.lo.u16[0], c.lo.u16[2], c.hi.u16[0], c.hi.u16[2],
+                         c.lo.u16[4], c.lo.u16[6], c.hi.u16[4], c.hi.u16[6]};
+  for (int i = 0; i < 8; ++i) o.u16[i] = v[i];
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMFHL_SH) {
+  Reg128 o;
+  const int32_t v[8] = {c.lo.s32[0], c.lo.s32[1], c.hi.s32[0], c.hi.s32[1],
+                        c.lo.s32[2], c.lo.s32[3], c.hi.s32[2], c.hi.s32[3]};
+  for (int i = 0; i < 8; ++i) o.s16[i] = sat<int16_t>(v[i]);
+  set128(c, rd(w), o);
+}
+LANTERN_SEM(PMTHL_LW) {
+  const Reg128 a = c.gpr[rs(w)];
+  c.lo.u32[0] = a.u32[0];
+  c.hi.u32[0] = a.u32[1];
+  c.lo.u32[2] = a.u32[2];
+  c.hi.u32[2] = a.u32[3];
+}
+
 #undef LANTERN_SEM
 
 // ---- branch conditions -----------------------------------------------------------------------
@@ -600,3 +900,5 @@ inline bool BC1F(const Cpu& c, uint32_t) { return (c.fcr31 & kFpuCond) == 0; }
 inline bool BC1T(const Cpu& c, uint32_t) { return (c.fcr31 & kFpuCond) != 0; }
 
 }  // namespace lantern::ee::sem
+
+#include "ee/semantics_vu0.h"  // IWYU pragma: export

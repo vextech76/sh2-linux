@@ -30,6 +30,7 @@ src/iso        read-only ISO9660 reader
 src/ingest     disc identification/extraction + lantern-ingest tool
 src/ee         R5900 decoder (binutils-validated), ELF loader, lantern-disasm
 src/analysis   function discovery, syscalls, overlays, IOP modules, lantern-analyze
+src/recomp     C++ emitter, runtime dispatcher, lantern-recomp
 src/app        CLI and main loop
 tests/         doctest unit tests + CTest smoke/GPU tests
 scripts/       check.sh (lint + build + tests gate)

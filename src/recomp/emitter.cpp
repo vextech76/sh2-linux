@@ -64,6 +64,11 @@ struct FunctionEmitter {
   void plain(const Insn& in) {
     ++stats.instructions;
     if (in.word == 0) return;  // nop (sll zero,zero,0)
+    if (in.op == Op::VU0_SPECIAL1 && ((in.word & 63) == 56 || (in.word & 63) == 57)) {
+      // VU0 micro-program call: has a semantic entry point but traps until VU micro mode exists.
+      ++stats.unimplemented;
+      ++stats.missing_ops["vcallms/vcallmsr (VU0 micro mode, traps)"];
+    }
     if (const char* n = in.valid() ? sem_name(in.op) : nullptr) {
       line(std::format("sem::{}(c, m, 0x{:08x}u, 0x{:08x}u);", n, in.word, in.pc));
       return;

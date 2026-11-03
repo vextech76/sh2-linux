@@ -13,7 +13,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-6 | Platform: SDL3 window/events/gamepads, fullscreen, mouse capture | done | | |
 | LAN-7 | Ingest: read-only ISO9660 reader + disc ID + extraction | done | | SLUS-20228 identified; boot set extracted to XDG data |
 | LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | done | | See docs/ANALYSIS.md; overlays confirmed |
-| LAN-9 | Recompiler: R5900 → C++ | todo | | |
+| LAN-9 | Recompiler: R5900 → C++ | done | | 514,628 insns; 14 runtime-trap sites; differential tests |
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | todo | | |
 | LAN-11 | VU1 + GS → Vulkan | todo | | |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
@@ -24,6 +24,6 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-9: recompiler skeleton — guest CPU context (128-bit GPRs, HI/LO pairs, FPU, VU0 regs),
-  memory map, function emitter for the integer/branch subset, dispatch table, trap on unknown
-  targets; differential tests of emitted semantics against a reference interpreter.
+- LAN-10: boot path + HLE kernel: load ELF into guest RAM, entry stub, the 60 syscalls
+  (threads via host coroutines, semaphores, INTC/DMAC handlers, alarms), SIF RPC skeleton,
+  run the recompiled game until the first unhandled subsystem and report.
