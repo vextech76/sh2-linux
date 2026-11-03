@@ -21,6 +21,7 @@ lantern_test(test_iso lantern_iso)
 lantern_test(test_elf lantern_ee)
 lantern_test(test_r5900 lantern_ee)
 lantern_test(test_analysis lantern_analysis)
+lantern_test(test_interpreter lantern_ee)
 
 # Optional differential test against GNU binutils (sudo dnf install binutils-mips64-linux-gnu).
 find_program(MIPS_OBJDUMP mips64-linux-gnu-objdump)
