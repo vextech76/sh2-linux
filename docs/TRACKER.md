@@ -12,14 +12,18 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-5 | Render: abstraction + Null + Vulkan 1.3 + PLACEHOLDER | done | | GPU tests incl. swapchain recreation under validation |
 | LAN-6 | Platform: SDL3 window/events/gamepads, fullscreen, mouse capture | done | | |
 | LAN-7 | Ingest: read-only ISO9660 reader + disc ID + extraction | done | | SLUS-20228 identified; boot set extracted to XDG data |
-| LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | todo | | |
+| LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | done | | See docs/ANALYSIS.md; overlays confirmed |
 | LAN-9 | Recompiler: R5900 → C++ | todo | | |
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | todo | | |
 | LAN-11 | VU1 + GS → Vulkan | todo | | |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-13 | Choose a license | blocked | | Owner decision |
 | LAN-14 | Remove wrongly installed `volk-devel` (GNU Radio) | todo | | Owner action: `sudo dnf remove volk-devel` |
+| LAN-15 | MGF archive format analysis | todo | | |
+| LAN-16 | R3000A interpreter + IOP kernel-library HLE (for game sound modules) | todo | | Decision D-6.1 |
+| LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-8: EE ELF loader + R5900 disassembler (table-tested), CFG function discovery on the main
-  image, overlay hypothesis check (GX/GY/GZ *.BIN vs. 0x01F0BC00 segments), syscall inventory.
+- LAN-9: recompiler skeleton — guest CPU context (128-bit GPRs, HI/LO pairs, FPU, VU0 regs),
+  memory map, function emitter for the integer/branch subset, dispatch table, trap on unknown
+  targets; differential tests of emitted semantics against a reference interpreter.

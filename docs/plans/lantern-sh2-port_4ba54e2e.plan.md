@@ -23,7 +23,7 @@ todos:
     status: completed
   - id: s6-analysis
     content: EE ELF parser, function discovery, syscall/IRX/VU-microcode inventory, feasibility report
-    status: pending
+    status: completed
   - id: s7-recomp-runtime
     content: R5900 -> C++ translator, memory map, HLE kernel/SIF, pad/cdvd/memcard IOP HLE
     status: pending
@@ -95,3 +95,8 @@ BIOS LLE.
 - **Per-image render-finished semaphores** — avoids reuse hazards flagged by modern validation.
 - **Input via virtual DS2 only** — the game reads pad buffers; one mapping point, testable without SDL.
 - **No BIOS** — HLE kernel; avoids needing/reading copyrighted firmware at runtime.
+- **D-6.1 Hybrid IOP** (Stage 6 finding) — HLE SCE modules at SIF-RPC level; interpret the
+  game's own Konami sound modules (R3000A + IOP-kernel HLE + SPU2) instead of reverse-engineering
+  their private protocol. See docs/ANALYSIS.md §6.
+- **Overlay-aware recompilation** — 54 overlays share 0x01F0BC00; functions are identified by
+  (overlay, address) and indirect dispatch consults the loaded overlay.

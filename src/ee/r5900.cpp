@@ -353,6 +353,30 @@ Insn decode(uint32_t w, uint32_t pc) {
   return in;
 }
 
+int written_gpr(const Insn& in) {
+  if (!in.valid()) return -1;
+  if (in.has(kLink)) return in.op == Op::JALR ? in.rd : 31;
+  const auto& info = kOps[static_cast<size_t>(in.op)];
+  switch (info.fmt) {
+    case Fmt::RdRsRt:
+    case Fmt::RdRtSa:
+    case Fmt::RdRtRs:
+    case Fmt::Rd:
+    case Fmt::RdRt:
+    case Fmt::RdRs: return in.rd;
+    case Fmt::RtRsImm:
+    case Fmt::RtRsUimm:
+    case Fmt::RtUimm: return in.rt;
+    case Fmt::Mem: return in.has(kLoad) ? in.rt : -1;
+    case Fmt::RtCop0: return in.op == Op::MFC0 ? in.rt : -1;
+    case Fmt::RtFs: return in.op == Op::MFC1 ? in.rt : -1;
+    case Fmt::RtFcr: return in.op == Op::CFC1 ? in.rt : -1;
+    case Fmt::RtVf: return in.op == Op::QMFC2 ? in.rt : -1;
+    case Fmt::RtVi: return in.op == Op::CFC2 ? in.rt : -1;
+    default: return -1;
+  }
+}
+
 std::string_view vu0_mnemonic(const Insn& in) {
   if (in.op == Op::VU0_SPECIAL1) return kVuSpecial1[in.vu_opcode & 63];
   if (in.op == Op::VU0_SPECIAL2) return kVuSpecial2[in.vu_opcode & 127];

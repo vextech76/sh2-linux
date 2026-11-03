@@ -17,6 +17,13 @@ target_link_libraries(lantern_ee PUBLIC lantern_core PRIVATE lantern_warnings)
 add_executable(lantern-disasm ee/disasm_main.cpp)
 target_link_libraries(lantern-disasm PRIVATE lantern_ee lantern_warnings)
 
+# --- analysis: static inventory of EE code, overlays, IOP modules ---
+add_library(lantern_analysis STATIC analysis/code_analysis.cpp analysis/iop.cpp analysis/vif.cpp
+            analysis/ps2_syscalls.cpp)
+target_link_libraries(lantern_analysis PUBLIC lantern_ee PRIVATE lantern_warnings)
+add_executable(lantern-analyze analysis/analyze_main.cpp)
+target_link_libraries(lantern-analyze PRIVATE lantern_analysis lantern_iso lantern_warnings)
+
 # --- input: device-agnostic mapping (no SDL) ---
 add_library(lantern_input STATIC input/pad.cpp input/binding.cpp input/deadzone.cpp input/input_system.cpp)
 target_link_libraries(lantern_input PUBLIC lantern_core PRIVATE lantern_warnings)

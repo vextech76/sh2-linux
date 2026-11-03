@@ -57,6 +57,14 @@ build/release/src/lantern-ingest identify "/path/to/Silent Hill 2.iso" --hash
 build/release/src/lantern-ingest extract  "/path/to/Silent Hill 2.iso"   # boot set -> ~/.local/share/lantern/extracted/<serial>/
 ```
 
+## 6. Static analysis (writes only to ~/.local/share/lantern/analysis/)
+
+```sh
+build/release/src/lantern-analyze --extracted ~/.local/share/lantern/extracted/SLUS-20228 --iso "/path/to/Silent Hill 2.iso"
+```
+
+Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
+
 ## Troubleshooting
 
 | Symptom | Fix |

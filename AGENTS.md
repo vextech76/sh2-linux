@@ -18,7 +18,7 @@ renderer behind an abstraction, virtual-DualShock-2 input mapping, TOML config. 
 | Lint | `clang-format --dry-run --Werror` (via `scripts/check.sh`) + `-Werror` build |
 | Test suite | `ctest --preset debug` (parallel); GPU: `ctest --preset debug-gpu` |
 | Full gate | `scripts/check.sh --gpu` |
-| Deploy | none (local builds only) |
+| Deploy | none (local builds only); remote `origin` = github.com/vextech76/sh2-linux (private) |
 | Commit format | `type(scope): description (LAN-n)` |
 
 ## Hard rules

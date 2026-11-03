@@ -168,7 +168,7 @@ vector units with their own microcode, **GIF/VIF/DMAC** data paths, the **GS** r
 the **IOP** (R3000A running IRX modules: pad, CDVD, memcard, sound), **SPU2** audio and the
 **IPU** MPEG-2 decoder (FMVs).
 
-1. **Analysis** (Stage 6): parse the boot ELF; recover functions (symbols if present, else
+1. ✅ **Analysis** (Stage 6, findings in [ANALYSIS.md](ANALYSIS.md)): parse the boot ELF; recover functions (symbols if present, else
    control-flow discovery), syscalls used, IRX modules loaded, VU microcode blobs, jump
    tables. Output: a report + a TOML function/config map consumed by the recompiler.
 2. **EE recompiler** (Stage 7): per-function translation of R5900 code to C++ operating on a
@@ -176,10 +176,11 @@ the **IOP** (R3000A running IRX modules: pad, CDVD, memcard, sound), **SPU2** au
    a 32 MB RDRAM array + MMIO dispatch. Indirect jumps go through a dispatch table;
    un-translated targets trap with the guest PC (never silently skipped). Generated code lands
    outside the repo.
-3. **HLE kernel + IOP** (Stage 7): EE syscalls (threads, semaphores, interrupts, DMA, SIF RPC)
-   implemented natively. IOP modules are high-level-emulated at the SIF RPC boundary:
-   `padman` ← `InputSystem::sample()`, `cdvd` ← `vfs::Disc`, memcard ← `memcards/`, sound
-   ← SPU2 path. **The BIOS is not used.** (`scph10000` is not needed and is not read.)
+3. **HLE kernel + IOP** (Stage 7): the 60 EE syscalls the game uses, implemented natively.
+   IOP (decision D-6.1): SCE modules HLE'd at the SIF RPC boundary (`padman` ←
+   `InputSystem::sample()`, `cdvdfsv`/`fileio` ← `vfs::Disc`, memcard ← `memcards/`); the
+   game's own Konami sound modules run on an R3000A interpreter with IOP-kernel HLE and
+   register-level SPU2. **The BIOS is not used.** (`scph10000` is not needed and is not read.)
 4. **GS/VU1 → Vulkan** (Stage 8): VU1 microcode interpreted (later recompiled) to produce GIF
    packets; a GS translator turns primitives + GS register state into Vulkan draws against an
    emulated local-memory model (4 MB VRAM, swizzled texture formats, CLUTs). This is where the

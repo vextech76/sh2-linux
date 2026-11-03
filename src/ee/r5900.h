@@ -345,6 +345,9 @@ std::string_view mnemonic(Op op);
 // GNU-objdump-like text (no aliases), e.g. "addiu sp,sp,-16". VU0 macro ops print a VU mnemonic.
 std::string disassemble(const Insn& insn);
 std::string_view gpr_name(unsigned r);
+// General-purpose register written by the instruction (JAL/BxxAL write $ra), or -1 if none.
+// Writes to $zero report 0; callers decide whether that matters.
+int written_gpr(const Insn& insn);
 // VU0 macro-mode mnemonic for VU0_SPECIAL1/2 (e.g. "vmaddx"); "(invalid)" if unassigned.
 std::string_view vu0_mnemonic(const Insn& insn);
 
