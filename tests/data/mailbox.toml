@@ -1,0 +1,6 @@
+# Test fixture: mailbox present mode (falls back to fifo where unsupported), stretched aspect.
+[graphics]
+present_mode = "mailbox"
+aspect = "stretch"
+frames_in_flight = 3
+validation = "on"
