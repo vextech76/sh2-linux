@@ -67,6 +67,7 @@ constexpr uint32_t daddiu(unsigned t, unsigned s, int imm) { return I(25, s, t, 
 constexpr uint32_t ori(unsigned t, unsigned s, unsigned imm) { return I(13, s, t, static_cast<int>(imm)); }
 constexpr uint32_t lui(unsigned t, unsigned imm) { return I(15, 0, t, static_cast<int>(imm)); }
 constexpr uint32_t slti(unsigned t, unsigned s, int imm) { return I(10, s, t, imm); }
+constexpr uint32_t sltiu(unsigned t, unsigned s, int imm) { return I(11, s, t, imm); }
 constexpr uint32_t lw(unsigned t, int off, unsigned b) { return I(35, b, t, off); }
 constexpr uint32_t sw(unsigned t, int off, unsigned b) { return I(43, b, t, off); }
 constexpr uint32_t lwl(unsigned t, int off, unsigned b) { return I(34, b, t, off); }

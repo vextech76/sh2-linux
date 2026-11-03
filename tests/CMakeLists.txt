@@ -23,6 +23,21 @@ lantern_test(test_r5900 lantern_ee)
 lantern_test(test_analysis lantern_analysis)
 lantern_test(test_interpreter lantern_ee)
 
+# Recompiler differential test: generate C++ from synthetic programs at build time, compile it,
+# and compare against the interpreter. Generated code is built like real recompiled output:
+# no project warnings, and FP contraction off so float results match the interpreter exactly.
+add_executable(recomp_selftest_gen recomp_selftest_gen.cpp)
+target_link_libraries(recomp_selftest_gen PRIVATE lantern_recomp)
+set(SELFTEST_GEN ${CMAKE_CURRENT_BINARY_DIR}/recomp_selftest_generated.cpp)
+add_custom_command(OUTPUT ${SELFTEST_GEN} COMMAND recomp_selftest_gen ${SELFTEST_GEN}
+                   DEPENDS recomp_selftest_gen ${CMAKE_CURRENT_SOURCE_DIR}/recomp_programs.h
+                   COMMENT "recompiling synthetic test programs")
+add_library(recomp_selftest_code STATIC ${SELFTEST_GEN})
+target_link_libraries(recomp_selftest_code PUBLIC lantern_recomp_runtime)
+target_compile_options(recomp_selftest_code PRIVATE -ffp-contract=off -Wno-unused-label)
+lantern_test(test_recomp lantern_recomp_runtime recomp_selftest_code)
+target_compile_options(test_recomp PRIVATE -ffp-contract=off)
+
 # Optional differential test against GNU binutils (sudo dnf install binutils-mips64-linux-gnu).
 find_program(MIPS_OBJDUMP mips64-linux-gnu-objdump)
 find_package(Python3 COMPONENTS Interpreter)

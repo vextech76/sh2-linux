@@ -24,6 +24,12 @@ target_link_libraries(lantern_analysis PUBLIC lantern_ee PRIVATE lantern_warning
 add_executable(lantern-analyze analysis/analyze_main.cpp)
 target_link_libraries(lantern-analyze PRIVATE lantern_analysis lantern_iso lantern_warnings)
 
+# --- recomp: C++ emitter + runtime dispatcher ---
+add_library(lantern_recomp_runtime STATIC recomp/runtime.cpp)
+target_link_libraries(lantern_recomp_runtime PUBLIC lantern_ee PRIVATE lantern_warnings)
+add_library(lantern_recomp STATIC recomp/emitter.cpp)
+target_link_libraries(lantern_recomp PUBLIC lantern_analysis lantern_recomp_runtime PRIVATE lantern_warnings)
+
 # --- input: device-agnostic mapping (no SDL) ---
 add_library(lantern_input STATIC input/pad.cpp input/binding.cpp input/deadzone.cpp input/input_system.cpp)
 target_link_libraries(lantern_input PUBLIC lantern_core PRIVATE lantern_warnings)
