@@ -60,6 +60,12 @@ class PadService {
   explicit PadService(ee::Memory& ee) : ee_(ee) {}
   void register_with(SifHle& sif);
   void update(const input::PadState& pad);  // call once per VBlank
+  // Debug: log the first guest reads of the pad buffer with the reading instruction's PC.
+  void log_reads(bool on) { log_reads_ = on; }
+  // Debug: on the first pad read after frame 900, dump the guest call chain (see DESIGN).
+  void walk_pad_stack_at_title() { walk_requested_ = true; }
+  void set_frame_counter(std::function<uint64_t()> fn) { frame_counter_ = std::move(fn); }
+  uint64_t reads_total() const { return reads_total_; }
   uint64_t opened() const { return areas_.size(); }
   const std::map<uint32_t, uint64_t>& unknown_commands() const { return unknown_commands_; }
 
@@ -71,6 +77,11 @@ class PadService {
   uint32_t frame_ = 0;
   bool pressure_ = false;
   std::map<uint32_t, uint64_t> unknown_commands_;  // padman command word -> calls
+  bool log_reads_ = false;
+  uint64_t logged_ = 0;
+  uint64_t reads_total_ = 0;
+  bool walk_requested_ = false;
+  std::function<uint64_t()> frame_counter_;
 };
 
 // LOADFILE RPC server (0x80000006): the HLE IOP already provides every service the game needs at

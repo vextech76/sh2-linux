@@ -70,11 +70,14 @@ class Kernel final : public ee::Hooks {
     int threads_created = 0;
   };
   const Stats& stats() const { return stats_; }
+  // Guest PC samples taken at safe points (where threads actually spend their time).
+  const std::map<uint32_t, uint64_t>& pc_histogram() const { return pc_histogram_; }
   std::string describe_threads() const;
   struct ThreadContext {
     int id;
     bool running;
     uint32_t sp, ra;
+    uint32_t pc;
   };
   std::vector<ThreadContext> thread_contexts() const;
 
@@ -85,6 +88,7 @@ class Kernel final : public ee::Hooks {
     ee::Reg128 gpr[32]{};
     ee::Reg128 hi{}, lo{};
     uint32_t sa = 0, fcr31 = 0, acc = 0;
+    uint32_t pc = 0;
     uint32_t fpr[32]{};
   };
   enum class State { Ready, Running, Waiting, Suspended, Dormant };
@@ -183,6 +187,7 @@ class Kernel final : public ee::Hooks {
   std::exception_ptr pending_;
   std::optional<int> exit_code_;
   Stats stats_;
+  std::map<uint32_t, uint64_t> pc_histogram_;
 };
 
 }  // namespace lantern::ps2

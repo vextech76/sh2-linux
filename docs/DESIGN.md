@@ -354,15 +354,13 @@ and `common/include/libmc-common.h` structures):
 **Verified:** SLUS-20228 no longer shows the memory-card prompt: it queries GETINFO 32 times, sees
 a formatted PS2 card with 8184 KB free, and boots straight to the Konami logo and title screen.
 
-**Open (LAN-27):** the title screen still ignores Start/Cross, so the main menu is unreachable.
-Ruled out so far, each with evidence: the memory card (prompt gone, GETINFO answered), the pad
-handshake (one OPEN per port, correct command-word dispatch — it used to reopen 326 times because
-the service dispatched on the RPC *function* number instead of the command word), thread health
-(4 threads ready, no deadlock) and sound readiness (a PLACEHOLDER that answers "ready" for the
-Konami/SDR servers does not change it). Remaining suspects: the pad state machine details
-(`padGetState`/`reqState` semantics), the sound *streaming* threads that SH2 starts for music, or a
-wait inside the title task itself. Next: trace the title task's own loop (thread 1 backtrace at the
-title) instead of the service side.
+**Guest-side trace of the title screen (LAN-27):** see `docs/TITLE-TRACE.md` for the method and
+the disassembly. Short version: thread 1's hot loop is `sceGsSyncV` (write 4 to INTC_STAT at
+0x1000F000, spin until bit 2 sets again — i.e. wait for the next VBlank), the game polls the pad
+every frame through libpad, and the input gate in the game's own handler (0x0018FA90) is
+**satisfied** on port 0: report length 20, `ctx[33] = 0x01`, `ctx[43] = 0x11` (bit 4 set). So input
+is delivered and processed; the title→menu transition is gated downstream of input, and the
+remaining dependency is almost certainly the sound system (Stage 9).
 
 ## 9. Known limitations / risks
 

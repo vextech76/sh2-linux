@@ -165,6 +165,37 @@ void PadService::command(RpcCall& c) {
       areas_[static_cast<int>(port * 8 + slot)] = area;
       put32(c, 5, 0x001F0000 + port * 0x100);  // padBuf (IOP address)
       log::info(kSub, "pad port {} slot {} open, pad area 0x{:08x}", port, slot, area);
+      // Always count guest reads of the pad buffer (one range check per access); logging is opt-in.
+      ee_.set_watch(area, area + 256, [area, this](uint32_t addr, uint32_t pc, bool write, unsigned sz) {
+        if (write) return;
+        const uint32_t ra = ee_.guest_ra;
+        ++reads_total_;
+        if (walk_requested_ && frame_counter_ && frame_counter_() > 900) {
+          walk_requested_ = false;
+          // Guest stack walk: report the call chain that is polling the pad at the title screen.
+          std::string chain;
+          for (uint32_t a = ee_.guest_sp; a < ee_.guest_sp + 0x400; a += 4) {
+            if (const uint8_t* w = ee_.host(a, 4)) {
+              uint32_t ret;
+              std::memcpy(&ret, w, 4);
+              if (ret >= 0x00100000 && ret < 0x003e6880 && (ret & 3) == 0) chain += std::format(" 0x{:08x}", ret);
+            }
+          }
+          log::info("pad-walk", "pad poll chain (sp 0x{:08x}, ra 0x{:08x}):{}", ee_.guest_sp, ra, chain);
+          // The game's input gate (0x0018fa90): ctx = table[port][slot]; it processes input only
+          // when ctx[33] != 0 and (ctx[43] & 0x10). ctx is per port/slot at 0x2D26E0 + port*16 + slot*4.
+          for (uint32_t p = 0; p < 2; ++p) {
+            const uint32_t ctx = ee_.read<uint32_t>(0x2D26E0 + p * 16);
+            if (!ctx) continue;
+            log::info("pad-walk", "port {} ctx 0x{:08x}: len[32]={} gateA[33]=0x{:02x} gateB[43]=0x{:02x} (bit4 {})", p,
+                      ctx, ee_.read<uint8_t>(ctx + 32), ee_.read<uint8_t>(ctx + 33), ee_.read<uint8_t>(ctx + 43),
+                      (ee_.read<uint8_t>(ctx + 43) & 0x10) ? "set" : "clear");
+          }
+        }
+        if (log_reads_ && ++logged_ <= 24)
+          log::info("pad-read", "frame {} read +0x{:02x} ({} bytes) pc 0x{:08x} ra 0x{:08x}",
+                    frame_counter_ ? frame_counter_() : 0, addr - area, sz, pc, ra);
+      });
       break;
     }
     case 0x0E:  // CLOSE
@@ -233,7 +264,9 @@ void PadService::update(const input::PadState& pad) {
     d[112] = port0 ? 6 : 0;  // state: STABLE (port 0) / DISCONN
     d[113] = 0;              // reqState: COMPLETE
     (void)pressure_;
+    ee_.suspend_watch(true);  // our own write must not be counted as a guest read
     ee_.load(base, d, sizeof d);
+    ee_.suspend_watch(false);
   }
 }
 

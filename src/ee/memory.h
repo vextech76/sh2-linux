@@ -24,6 +24,29 @@ class Memory {
 
   Memory() : ram_(new uint8_t[kRamSize]()), scratch_(new uint8_t[kScratchSize]()) {}
 
+  // Debug watch: reports every access inside [lo, hi) with the guest PC of the accessing
+  // instruction (set by the load/store semantics). Off by default.
+  struct Watch {
+    uint32_t lo = 0, hi = 0;
+    std::function<void(uint32_t addr, uint32_t pc, bool write, unsigned size)> fn;
+  };
+  void set_watch(uint32_t lo, uint32_t hi, std::function<void(uint32_t, uint32_t, bool, unsigned)> fn) {
+    watch_ = {lo, hi, std::move(fn)};
+  }
+  void clear_watch() { watch_ = {}; }
+  // Called by the load/store semantics: records who accessed memory, but only while a watch is
+  // installed, so the normal path costs one predictable branch.
+  void note_access(uint32_t pc, uint32_t ra, uint32_t sp) {
+    if (watch_.hi) {
+      guest_pc = pc;
+      guest_ra = ra;
+      guest_sp = sp;
+    }
+  }
+  uint32_t guest_pc = 0;
+  uint32_t guest_ra = 0;  // $ra of the accessing function (call-chain hint for watches)
+  uint32_t guest_sp = 0;  // $sp at the access, for a guest stack walk in watch handlers
+
   void set_mmio(MmioRead r, MmioWrite w) {
     mmio_read_ = std::move(r);
     mmio_write_ = std::move(w);
@@ -41,9 +64,15 @@ class Memory {
       phys = addr & 0x1FFFFFFFu;  // kseg0/kseg1
     else if (addr >= 0x20000000u && addr < 0x40000000u)
       phys = addr & 0x0FFFFFFFu;  // uncached mirrors
+    if (watch_.hi && !watch_suspended_ && phys >= watch_.lo && phys < watch_.hi && watch_.fn)
+      watch_.fn(addr, guest_pc, false, size);  // physical range, so uncached aliases are seen too
     if (phys < kRamSize && phys + size <= kRamSize) return ram_.get() + phys;
     return nullptr;
   }
+
+  // Suspend the watch for our own writes (host code cannot be distinguised from guest writes in
+  // host(), so the writer around the watch says so explicitly).
+  void suspend_watch(bool on) { watch_suspended_ = on; }
 
   template <typename T>
   T read(uint32_t addr) {
@@ -94,6 +123,8 @@ class Memory {
 
   std::unique_ptr<uint8_t[]> ram_;
   std::unique_ptr<uint8_t[]> scratch_;
+  Watch watch_;
+  bool watch_suspended_ = false;
   MmioRead mmio_read_;
   MmioWrite mmio_write_;
 };

@@ -86,6 +86,13 @@ default: arrows = d-pad, Space = Cross, Escape/Return = Start, F11 fullscreen) a
 scripts input; `--swizzle-variant 0,1` selects the indexed-format in-block orders (see
 `src/gs/gs_memory.cpp` and DESIGN.md §8.3).
 
+**After changing `src/ee/*.h`**, rebuild both the host and the generated game library (the library
+inlines those headers; mismatched layouts crash unpredictably):
+
+```sh
+cmake --build --preset release && cmake --build ~/.local/share/lantern/recomp/SLUS-20228/build
+```
+
 Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
 
 ## Troubleshooting

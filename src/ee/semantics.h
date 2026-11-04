@@ -238,64 +238,87 @@ LANTERN_SEM(CACHE) {}  // data/instruction cache maintenance has no effect on ho
 LANTERN_SEM(PREF) {}
 
 // ---- loads / stores --------------------------------------------------------------------------
-LANTERN_SEM(LB) { set(c, rt(w), static_cast<uint64_t>(static_cast<int8_t>(m.read<uint8_t>(addr(c, w))))); }
-LANTERN_SEM(LBU) { set(c, rt(w), m.read<uint8_t>(addr(c, w))); }
+LANTERN_SEM(LB) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
+  set(c, rt(w), static_cast<uint64_t>(static_cast<int8_t>(m.read<uint8_t>(addr(c, w)))));
+}
+LANTERN_SEM(LBU) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
+  set(c, rt(w), m.read<uint8_t>(addr(c, w)));
+}
 LANTERN_SEM(LH) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 2, pc, w);
   set(c, rt(w), static_cast<uint64_t>(static_cast<int16_t>(m.read<uint16_t>(a))));
 }
 LANTERN_SEM(LHU) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 2, pc, w);
   set(c, rt(w), m.read<uint16_t>(a));
 }
 LANTERN_SEM(LW) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 4, pc, w);
   set(c, rt(w), sx32(m.read<uint32_t>(a)));
 }
 LANTERN_SEM(LWU) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 4, pc, w);
   set(c, rt(w), m.read<uint32_t>(a));
 }
 LANTERN_SEM(LD) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 8, pc, w);
   set(c, rt(w), m.read<uint64_t>(a));
 }
-LANTERN_SEM(LQ) {  // R5900 ignores the low 4 address bits
+LANTERN_SEM(LQ) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);  // R5900 ignores the low 4 address bits
   Reg128 v;
   m.read128(addr(c, w) & ~15u, v);
   set128(c, rt(w), v);
 }
-LANTERN_SEM(SB) { m.write<uint8_t>(addr(c, w), static_cast<uint8_t>(R(c, rt(w)))); }
+LANTERN_SEM(SB) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
+  m.write<uint8_t>(addr(c, w), static_cast<uint8_t>(R(c, rt(w))));
+}
 LANTERN_SEM(SH) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 2, pc, w);
   m.write<uint16_t>(a, static_cast<uint16_t>(R(c, rt(w))));
 }
 LANTERN_SEM(SW) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 4, pc, w);
   m.write<uint32_t>(a, R32(c, rt(w)));
 }
 LANTERN_SEM(SD) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 8, pc, w);
   m.write<uint64_t>(a, R(c, rt(w)));
 }
-LANTERN_SEM(SQ) { m.write128(addr(c, w) & ~15u, c.gpr[rt(w)]); }
+LANTERN_SEM(SQ) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
+  m.write128(addr(c, w) & ~15u, c.gpr[rt(w)]);
+}
 
 // Unaligned word/doubleword access, little-endian.
 LANTERN_SEM(LWL) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 3;
   uint32_t mem = m.read<uint32_t>(a & ~3u);
   static constexpr uint32_t kMask[4] = {0x00FFFFFF, 0x0000FFFF, 0x000000FF, 0x00000000};
   set(c, rt(w), sx32((R32(c, rt(w)) & kMask[s]) | (mem << (24 - 8 * s))));
 }
 LANTERN_SEM(LWR) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 3;
   uint32_t mem = m.read<uint32_t>(a & ~3u);
   if (s == 0) {
@@ -306,36 +329,42 @@ LANTERN_SEM(LWR) {
   }
 }
 LANTERN_SEM(SWL) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 3;
   uint32_t mem = m.read<uint32_t>(a & ~3u);
   static constexpr uint32_t kMask[4] = {0xFFFFFF00, 0xFFFF0000, 0xFF000000, 0x00000000};
   m.write<uint32_t>(a & ~3u, (R32(c, rt(w)) >> (24 - 8 * s)) | (mem & kMask[s]));
 }
 LANTERN_SEM(SWR) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 3;
   uint32_t mem = m.read<uint32_t>(a & ~3u);
   static constexpr uint32_t kMask[4] = {0x00000000, 0x000000FF, 0x0000FFFF, 0x00FFFFFF};
   m.write<uint32_t>(a & ~3u, (R32(c, rt(w)) << (8 * s)) | (mem & kMask[s]));
 }
 LANTERN_SEM(LDL) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 7;
   uint64_t mem = m.read<uint64_t>(a & ~7u);
   uint64_t keep = s == 7 ? 0 : (~0ull >> (8 * (s + 1)));
   set(c, rt(w), (R(c, rt(w)) & keep) | (mem << (56 - 8 * s)));
 }
 LANTERN_SEM(LDR) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 7;
   uint64_t mem = m.read<uint64_t>(a & ~7u);
   uint64_t keep = s == 0 ? 0 : (~0ull << (64 - 8 * s));
   set(c, rt(w), (R(c, rt(w)) & keep) | (mem >> (8 * s)));
 }
 LANTERN_SEM(SDL) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 7;
   uint64_t mem = m.read<uint64_t>(a & ~7u);
   uint64_t keep = s == 7 ? 0 : (~0ull << (8 * (s + 1)));
   m.write<uint64_t>(a & ~7u, (R(c, rt(w)) >> (56 - 8 * s)) | (mem & keep));
 }
 LANTERN_SEM(SDR) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w), s = a & 7;
   uint64_t mem = m.read<uint64_t>(a & ~7u);
   uint64_t keep = s == 0 ? 0 : (~0ull >> (64 - 8 * s));
@@ -373,11 +402,13 @@ LANTERN_SEM(CTC1) {
   if (fs(w) == 31) c.fcr31 = R32(c, rt(w));
 }
 LANTERN_SEM(LWC1) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 4, pc, w);
   c.fpr[ft(w)] = m.read<uint32_t>(a);
 }
 LANTERN_SEM(SWC1) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   uint32_t a = addr(c, w);
   align(a, 4, pc, w);
   m.write<uint32_t>(a, c.fpr[ft(w)]);

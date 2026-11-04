@@ -327,10 +327,14 @@ LANTERN_SEM(CTC2) {
   // FBRST (28) resets / CMSAR writes have no lasting effect in macro-only mode.
 }
 LANTERN_SEM(LQC2) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
   if (!rt(w)) return;
   m.read128(addr(c, w) & ~15u, c.vu0.vf[rt(w)]);
 }
-LANTERN_SEM(SQC2) { m.write128(addr(c, w) & ~15u, c.vu0.vf[rt(w)]); }
+LANTERN_SEM(SQC2) {
+  m.note_access(pc, c.gpr[31].u32[0], c.gpr[29].u32[0]);
+  m.write128(addr(c, w) & ~15u, c.vu0.vf[rt(w)]);
+}
 
 inline bool BC2F(const Cpu&, uint32_t) { return true; }  // VU0 never busy (synchronous model)
 inline bool BC2T(const Cpu&, uint32_t) { return false; }

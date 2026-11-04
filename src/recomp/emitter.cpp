@@ -86,7 +86,10 @@ struct FunctionEmitter {
     if (inside(target)) {
       labels.insert(target);
       // Loop back-edge: give the kernel a safe point (interrupts, preemption).
-      if (from_pc && target <= from_pc) return std::format("rt.tick(); goto L_{:08x};", target);
+      // Loop back-edge: keep the guest PC exact (so the kernel's safe point can profile the loop
+      // and traps report the right address), then give the kernel a safe point.
+      if (from_pc && target <= from_pc)
+        return std::format("c.pc = 0x{:08x}u; rt.tick(); goto L_{:08x};", from_pc, target);
       return std::format("goto L_{:08x};", target);
     }
     // Tail call/jump. The callee returns to whatever $ra holds *now* -- guest code deliberately

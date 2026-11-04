@@ -98,6 +98,7 @@ void Kernel::save(Regs& r) const {
   r.sa = c_.sa;
   r.fcr31 = c_.fcr31;
   r.acc = c_.acc;
+  r.pc = c_.pc;
   std::copy(std::begin(c_.fpr), std::end(c_.fpr), std::begin(r.fpr));
 }
 void Kernel::load(const Regs& r) {
@@ -347,6 +348,7 @@ void Kernel::deliver_due(double now) {
 
 void Kernel::safe_point(bool allow_switch) {
   if (in_interrupt_ || !current_) return;
+  ++pc_histogram_[c_.pc];
   deliver_due(now());
   if (allow_switch && resched_pending_) {
     resched_pending_ = false;
@@ -814,7 +816,7 @@ std::vector<Kernel::ThreadContext> Kernel::thread_contexts() const {
   for (const auto& [id, t] : threads_) {
     const bool running = t.get() == current_;
     const auto& g = running ? c_.gpr : t->regs.gpr;
-    out.push_back({id, running, g[29].u32[0], g[31].u32[0]});
+    out.push_back({id, running, g[29].u32[0], g[31].u32[0], running ? c_.pc : t->regs.pc});
   }
   return out;
 }

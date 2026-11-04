@@ -55,6 +55,7 @@ std::string manifest_value(const fs::path& manifest, const std::string& key) {
 iop::CdvdService* g_cdvd = nullptr;
 gs::Gs* g_gs = nullptr;
 iop::McService* g_mc = nullptr;
+iop::PadService* g_pad = nullptr;
 gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
@@ -82,7 +83,8 @@ struct Report {
       r += "threads:\n" + kernel->describe_threads();
       // Heuristic guest backtraces: stack words that point just after a JAL in the main image.
       for (const auto& t : kernel->thread_contexts()) {
-        r += std::format("  thread {} sp=0x{:08x} ra=0x{:08x} stack return addresses:", t.id, t.sp, t.ra);
+        r += std::format("  thread {} pc=0x{:08x} sp=0x{:08x} ra=0x{:08x} stack return addresses:", t.id, t.pc, t.sp,
+                         t.ra);
         int found = 0;
         for (uint32_t a = t.sp; a < t.sp + 0x1000 && found < 10 && mem; a += 4) {
           const uint8_t* p = mem->host(a, 4);
@@ -99,6 +101,14 @@ struct Report {
         }
         r += "\n";
       }
+    }
+    if (kernel) {
+      std::vector<std::pair<uint64_t, uint32_t>> hot;
+      for (const auto& [pc, count] : kernel->pc_histogram()) hot.emplace_back(count, pc);
+      std::sort(hot.rbegin(), hot.rend());
+      r += "hot guest PCs (sampled at safe points):";
+      for (size_t i = 0; i < hot.size() && i < 12; ++i) r += std::format(" 0x{:08x}:{}", hot[i].second, hot[i].first);
+      r += "\n";
     }
     if (rt)
       r += std::format("guest continuations (non-standard returns followed): {}\n", rt->stats().nonstandard_returns);
@@ -164,6 +174,7 @@ struct Report {
                        mcst.getdirs, mcst.formats);
       for (const auto& nm : mcst.opened) r += "  opened " + nm + "\n";
     }
+    r += std::format("pad buffer reads by the guest: {}\n", g_pad ? g_pad->reads_total() : 0);
     if (g_loadfile) {
       r += std::format("IOP modules requested ({}):\n", g_loadfile->modules().size());
       for (const auto& mname : g_loadfile->modules()) r += "  " + mname + "\n";
@@ -189,6 +200,8 @@ int main(int argc, char** argv) {
   bool window = false;
   bool turbo = false;
   char mc_probe = 'A';
+  std::string watch;  // debug: ADDR[:SIZE] to log guest accesses (hex)
+  uint64_t watch_logged = 0;
   uint64_t stop_frame = 0;             // stop after this many guest frames (0 = no limit)
   int swizzle_t8 = 0, swizzle_t4 = 0;  // indexed in-block orders under test (see gs/gs_memory.cpp)
   struct Press {
@@ -218,6 +231,8 @@ int main(int argc, char** argv) {
       if (comma != std::string::npos) swizzle_t4 = std::stoi(spec.substr(comma + 1));
     } else if (a == "--window")
       window = true;
+    else if (a == "--watch" && i + 1 < argc)
+      watch = argv[++i];
     else if (a == "--mc-probe" && i + 1 < argc)
       mc_probe = argv[++i][0];
     else if (a == "--frames" && i + 1 < argc)
@@ -295,6 +310,17 @@ int main(int argc, char** argv) {
         hw.write(a, data, size);
       });
   ps2::load_elf(*mem, *elf);
+  if (!watch.empty()) {
+    const auto colon = watch.find(':');
+    const uint32_t lo = static_cast<uint32_t>(std::stoul(watch.substr(0, colon), nullptr, 16));
+    const uint32_t size =
+        colon == std::string::npos ? 0x100 : static_cast<uint32_t>(std::stoul(watch.substr(colon + 1), nullptr, 16));
+    mem->set_watch(lo, lo + size, [lo, &watch_logged](uint32_t addr, uint32_t pc, bool write, unsigned sz) {
+      if (write || ++watch_logged > 4000) return;
+      if (watch_logged <= 40)
+        log::info("watch", "read 0x{:08x} (+0x{:02x}, {} bytes) from pc 0x{:08x}", addr, addr - lo, sz, pc);
+    });
+  }
   iop::MemoryCard card;
   const auto card_path = resolve_paths().memcard_dir() / "card1.ps2";
   if (!card.load(card_path.string())) {
@@ -407,6 +433,10 @@ int main(int argc, char** argv) {
   iop::IopHeapService iop_heap;
   iop_heap.register_with(sif);
   pad.register_with(sif);
+  pad.log_reads(!watch.empty());
+  pad.walk_pad_stack_at_title();
+  g_pad = &pad;
+  pad.set_frame_counter([&kernel] { return kernel.stats().vblanks; });
   iop::McService mc(*mem, card);
   mc.set_probe_layout(mc_probe);
   mc.register_with(sif);
