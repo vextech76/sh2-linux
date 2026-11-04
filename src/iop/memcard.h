@@ -83,6 +83,7 @@ class McService {
   MemoryCard& card_;
   Stats stats_;
   char probe_layout_ = 'A';
+  uint64_t stat_calls_ = 0;
 };
 
 }  // namespace lantern::iop

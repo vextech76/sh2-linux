@@ -1,5 +1,6 @@
 #include "iop/memcard.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <fstream>
@@ -132,62 +133,89 @@ std::string McService::name_arg(const RpcCall& c, size_t off) const {
 
 void McService::command(RpcCall& c) {
   ++stats_.commands[c.fno];
-  c.result.assign(c.recv_size, 0);
+  // Argument buffer: mcDescParam_t (48 bytes) { fd, port, slot, size, offset, origin, buffer, param, data[16] }.
+  // Reply: mcRpcStat_t { result, mcserv_version, mcman_version }. Commands that return data also
+  // write an mcEndParam_t / mcEndParam2_t to the EE address in `param`, which is how the caller
+  // learns the card type, free space, formatted flag and transfer results.
+  c.result.assign(std::max<size_t>(c.recv_size, 12), 0);
+  auto arg = [&](size_t word) {
+    uint32_t v = 0;
+    if ((word + 1) * 4 <= c.args.size()) std::memcpy(&v, &c.args[word * 4], 4);
+    return v;
+  };
   auto put = [&](size_t word, uint32_t v) {
     if ((word + 1) * 4 <= c.result.size()) std::memcpy(&c.result[word * 4], &v, 4);
   };
-  const uint32_t type_ps2 = 2, format_ok = 0;
+  const uint32_t port = arg(1), slot = arg(2), param = arg(7);
+  constexpr uint32_t kMcservVersion = 0x213, kMcmanVersion = 0x223;  // versions of the disc's MCSERV/MCMAN
+  constexpr uint32_t kTypePs2 = 2;                                   // mcGetMcType: 2 = PS2 card
+
+  // End parameter structures (see libmc-common.h): classic 64 bytes, "2" variant 192 bytes with
+  // the formatted flag at offset 144.
+  auto write_end_param = [&](uint32_t dest, uint32_t type, uint32_t free_clusters, bool extended) {
+    if (!dest) return;
+    const uint32_t bytes = extended ? 192 : 64;
+    std::vector<uint8_t> buf(bytes, 0);
+    auto w32 = [&](size_t off, uint32_t v) { std::memcpy(&buf[off], &v, 4); };
+    w32(0, type);
+    w32(4, free_clusters);
+    if (extended) w32(144, card_.formatted() ? 0u : 1u);  // 0 = formatted
+    ee_.load(dest, buf.data(), buf.size());
+  };
+
   switch (c.fno) {
-    case 0xFE:    // info probe used by SLUS-20228: 12-byte reply, layout under investigation
-    case 0x78: {  // GET_INFO (classic numbering)
-      const uint32_t free_clusters = card_.free_clusters();
-      switch (probe_layout_) {
-        case 'A':
-          put(0, 0);
-          put(1, type_ps2);
-          put(2, free_clusters);
-          break;  // result, type, free
-        case 'B':
-          put(0, type_ps2);
-          put(1, free_clusters);
-          put(2, format_ok);
-          break;  // type, free, format
-        case 'C':
-          put(0, 1);
-          put(1, type_ps2);
-          put(2, free_clusters);
-          break;  // ok, type, free
-        default:
-          put(0, 0);
-          put(1, free_clusters);
-          put(2, type_ps2);
-          break;  // result, free, type
-      }
+    case 0xFE:  // XMCSERV INIT: the caller verifies the mcserv/mcman feature levels
+      put(0, 0);
+      put(1, kMcservVersion);
+      put(2, kMcmanVersion);
       break;
-    }
-    case 0x70:  // INIT
-      put(0, card_.formatted() ? 1u : 0u);
+    case 0x70:  // classic INIT: 4-byte reply only
+      put(0, 0);
       break;
-    case 0x71: {  // OPEN: reply holds the file descriptor
-      const std::string name = name_arg(c, 4);
+    case 0x01:  // XMCSERV GETINFO -> mcEndParam2_t at `param`
+    case 0x78:  // classic GETINFO -> mcEndParam_t at `param`
+      log::info(kSub, "getinfo port {} slot {}: type {} free {}KB formatted {}", static_cast<int>(port),
+                static_cast<int>(slot), kTypePs2, card_.free_clusters(), card_.formatted() ? "yes" : "no");
+      write_end_param(param, card_.formatted() ? kTypePs2 : 0u, card_.free_clusters(), c.fno == 0x01);
+      if (card_.formatted()) stat_calls_++;
+      put(0, 0);
+      break;
+    case 0x71: {  // OPEN: reply result = fd (the fd also travels in the end param for some libs)
+      const std::string name = name_arg(c, 8);  // mcNameParam_t style buffer
       if (stats_.opened.size() < 16) stats_.opened.push_back(name);
       ++stats_.opens;
-      put(0, 1);  // fd 1 (single open file; games open one at a time for saves)
-      put(1, 0);
+      put(0, 1);
+      write_end_param(param, 1, 0, false);
       break;
     }
-    case 0x72: ++stats_.reads; break;    // CLOSE
-    case 0x73: ++stats_.reads; break;    // READ: no file data modelled yet
-    case 0x74: ++stats_.writes; break;   // WRITE
-    case 0x75: break;                    // SEEK
-    case 0x76: ++stats_.getdirs; break;  // GET_DIR: empty listing
-    case 0x77:                           // FORMAT
+    case 0x72:
+      ++stats_.reads;
+      put(0, 0);
+      break;    // CLOSE
+    case 0x76:  // classic GETDIR
+    case 0x0D:  // XMCSERV GETDIR
+      ++stats_.getdirs;
+      put(0, 0);
+      break;
+    case 0x77:  // classic FORMAT
+    case 0x10:  // XMCSERV FORMAT
       card_.format(resolve_paths().memcard_dir() / "card1.ps2");
       ++stats_.formats;
+      put(0, 0);
       break;
+    case 0x73:
+      put(0, 0);
+      ++stats_.reads;
+      break;  // READ  (file data not modelled yet)
+    case 0x74:
+      put(0, 0);
+      ++stats_.writes;
+      break;                      // WRITE
+    case 0x75: put(0, 0); break;  // SEEK
+    case 0x7A: put(0, 0); break;  // FLUSH
     default:
       if (stats_.commands[c.fno] == 1)
-        log::warn(kSub, "PLACEHOLDER: mcman command 0x{:02x} not modelled yet (send {} recv {} bytes)", c.fno,
+        log::warn(kSub, "PLACEHOLDER: mcserv command 0x{:02x} not modelled yet (send {} recv {} bytes)", c.fno,
                   c.args.size(), c.recv_size);
       break;
   }

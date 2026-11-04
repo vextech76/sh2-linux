@@ -333,23 +333,31 @@ trapped at 0x00175188 as soon as it left the title screen.
 changes guest timing enough that boot stalls early in the module-load phase, so paced mode is used
 for behaviour checks; the investigation of that divergence is tracked (LAN-26).
 
-### 8.5 Memory card (LAN-22) 🟡
+### 8.5 Memory card (LAN-22) ✅ (info path) / 🟡 (file data)
 
-- `MemoryCard` (`src/iop/memcard.*`): 8 MB card backed by `$XDG_DATA_HOME/lantern/memcards/card1.ps2`
-  (512-byte pages, 1 KB clusters), with a real superblock, FAT and root directory: `format()`
-  writes a valid card, `free_clusters()` walks the FAT, entries are read from the on-card
-  directory. Unit-tested (format, free space, save/load round trip). The card is created and
-  formatted on first run, i.e. the state of a freshly inserted card.
-- `McService` (RPC 0x80000400) implements the classic command numbering (0x70..0x80) with INIT,
-  OPEN/CLOSE/SEEK/READ/WRITE/GETDIR/FORMAT plumbing and a probe reply; unmodelled commands are
-  answered with zeros and logged once each.
-- **Open:** SLUS-20228's "MEMORY CARD(PS2) not inserted" screen persists. The game issues exactly
-  one mcman call (function 0xFE, 48 bytes in, 12 bytes out) and its result does not change the
-  message in any of the four plausible 12-byte layouts tried (`--mc-probe A|B|C|D`), so either the
-  reply semantics differ from the assumption, or the presence check depends on state created by a
-  command that is never reached. Next step is to capture the full command sequence with a card
-  that already contains a save file, and to check whether an `mcserv`-side (`0x80000401`) or
-  thread/handshake reply is also required.
+Implemented against the documented mcserv RPC protocol (ps2sdk's `iop/memorycard/mcserv` server
+and `common/include/libmc-common.h` structures):
+
+- Argument buffer `mcDescParam_t` (48 bytes: fd, port, slot, size, offset, origin, buffer, param).
+- Reply `mcRpcStat_t` (12 bytes: result, mcserv_version, mcman_version). INIT (0xFE) reports the
+  feature levels of the disc's own modules (MCSERV 2.13, MCMAN 2.23); libmc rejects a card whose
+  server reports levels below 0x205/0x206.
+- **Card state arrives out-of-band:** GETINFO (0x01, or 0x78 classic) writes an `mcEndParam2_t` /
+  `mcEndParam_t` to the EE address passed in `param` — `{type, free, ..., formatted at 144}`. This
+  was the reason the game kept saying "not inserted": type 0 in that struct means no card, and it
+  had never been written.
+- `MemoryCard`: 8 MB card at `$XDG_DATA_HOME/lantern/memcards/card1.ps2`, real superblock/FAT/root
+  directory; created and formatted on first use.
+- OPEN/CLOSE/SEEK/READ/WRITE/GETDIR/FORMAT are dispatched (file *data* is not modelled yet); every
+  unmodelled command is logged once.
+
+**Verified:** SLUS-20228 no longer shows the memory-card prompt: it queries GETINFO 32 times, sees
+a formatted PS2 card with 8184 KB free, and boots straight to the Konami logo and title screen.
+
+**Open (LAN-27):** the title screen still ignores Start/Cross, so the main menu is unreachable.
+The card is not the cause (the prompt is gone); the remaining suspects are the sound system
+(Stage 9) and the pad state machine. File-level card operations (list/create/read/write a save)
+are plumbed but unexercised until the game can reach its menus.
 
 ## 9. Known limitations / risks
 

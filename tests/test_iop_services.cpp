@@ -182,19 +182,40 @@ TEST_CASE("memory card model: format, free clusters, save/load round trip") {
   std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("mcman: info probe replies in the selected layout, unsupported commands are counted") {
+TEST_CASE("mcserv protocol: INIT reports feature levels, GETINFO writes the end-parameter struct") {
   Rig r;
   iop::MemoryCard card;
-  card.format((std::filesystem::temp_directory_path() / "lantern_test_mc2.ps2").string());
+  const auto path = std::filesystem::temp_directory_path() / "lantern_test_mc2.ps2";
+  card.format(path.string());
   iop::McService mc(*r.ee, card);
-  mc.set_probe_layout('B');
   mc.register_with(r.sif);
   auto srv = r.bind(0x80000400);
-  r.call(srv, 0xFE, std::vector<uint8_t>(48, 0), 12);
-  CHECK(r.ee->read<uint32_t>(kEeReply) == 2);        // type: PS2 card
-  CHECK(r.ee->read<uint32_t>(kEeReply + 4) > 8000);  // free clusters
-  CHECK(r.ee->read<uint32_t>(kEeReply + 8) == 0);    // formatted
-  r.call(srv, 0x7D, {}, 4);                          // unmodelled: zeros, counted
+
+  // INIT (XMCSERV, 0xFE): mcRpcStat_t { result, mcserv_version, mcman_version }. libmc refuses a
+  // card when the versions are below 0x205/0x206, which is why a zero reply read as "no card".
+  std::vector<uint8_t> init(48, 0);
+  r.call(srv, 0xFE, init, 12);
+  CHECK(r.ee->read<uint32_t>(kEeReply) == 0);
+  CHECK(r.ee->read<uint32_t>(kEeReply + 4) == 0x213);  // mcserv 2.13 (the disc's MCSERV.IRX)
+  CHECK(r.ee->read<uint32_t>(kEeReply + 8) == 0x223);  // mcman 2.23
+
+  // GETINFO (XMCSERV, 0x01): mcDescParam_t with `param` = an EE address that receives
+  // mcEndParam2_t { type, free, ..., formatted at 144 }.
+  const uint32_t endp = 0x00610000;
+  std::vector<uint8_t> args(48, 0);
+  const uint32_t fields[2] = {0, endp};  // fd, ..., param
+  std::memcpy(&args[28], &fields[1], 4);
+  r.call(srv, 0x01, args, 12);
+  CHECK(r.ee->read<uint32_t>(endp) == 2);        // type: PS2 card
+  CHECK(r.ee->read<uint32_t>(endp + 4) > 8000);  // free clusters (~8 MB)
+  CHECK(r.ee->read<uint32_t>(endp + 144) == 0);  // formatted
+  CHECK(r.ee->read<uint32_t>(kEeReply) == 0);
+
+  // Classic GETINFO writes the 64-byte variant (no formatted field).
+  r.call(srv, 0x78, args, 4);
+  CHECK(r.ee->read<uint32_t>(endp) == 2);
+
+  r.call(srv, 0x7D, std::vector<uint8_t>(4, 0), 4);  // unmodelled command: counted, not silent
   CHECK(mc.stats().commands.at(0x7D) == 1);
-  std::filesystem::remove(std::filesystem::temp_directory_path() / "lantern_test_mc2.ps2");
+  std::filesystem::remove(path);
 }
