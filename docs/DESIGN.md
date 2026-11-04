@@ -292,6 +292,26 @@ EE ──DMA ch1──▶ VIF1 ──DIRECT──▶ GIF PATH2 ─┐
 - Observed: at this point the game draws exclusively via VIF1 DIRECT (PATH2) and GIF PATH3; no
   VU1 microcode has been uploaded yet.
 
+### 8.4 Presentation and pad input (Stage 8d, LAN-19/20) ✅
+
+- `Renderer::set_frame_image()` / `draw_frame_image()`: the GS display is uploaded through a
+  per-frame staging buffer into a sampled texture (recreated on size change, layout barriers via
+  synchronization2) and drawn letterboxed 4:3 with linear upscaling. GPU test
+  `gpu_vulkan_image_upload` runs it under validation with a mid-run resize.
+- `lantern-boot --window`: SDL3 window + Vulkan, input via `InputSystem` (user config bindings),
+  F11 fullscreen; closing the window ends the guest. Presentation happens at guest VBlank, so FIFO
+  vsync paces the emulation.
+- `PadService` (0x80000100/101, "new" libpad protocol per ps2sdk): INIT/OPEN/... and a per-VBlank
+  refresh of the 2x128-byte `pad_data_new` buffers with a DualShock 2 (0x79) report from the
+  virtual pad (port 0; port 1 reports disconnected).
+- `--press FRAME:button` scripts pad input for automated checks. Verified on SLUS-20228: Left
+  selects "Yes" on the memory-card prompt, Cross confirms, the game proceeds to the Konami logo
+  and the SILENT HILL 2 title screen.
+
+**Known visual defect:** the title screen's textures are scrambled within 16-pixel blocks: the
+game aliases texture formats there, which the provisional 8/4-bit in-block order (§8.3) cannot
+reproduce. Exact PSMT8/PSMT4 column tables are the next fix.
+
 ## 9. Known limitations / risks
 
 - **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,

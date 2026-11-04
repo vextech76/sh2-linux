@@ -144,6 +144,83 @@ void CdvdService::search(RpcCall& c) {
   put32(c, 0, 1);
 }
 
+void PadService::register_with(SifHle& sif) {
+  sif.register_server(0x80000100, "padman", [this](RpcCall& c) { command(c); });
+  sif.register_server(0x80000101, "padman-ext", [this](RpcCall& c) { command(c); });
+}
+
+void PadService::command(RpcCall& c) {
+  // The reply is the same union buffer the EE sent, with results at word 3 (and padBuf at 5).
+  c.result.assign(c.args.begin(), c.args.end());
+  if (c.result.size() < c.recv_size) c.result.resize(c.recv_size, 0);
+  const uint32_t cmd = arg32(c, 0), port = arg32(c, 1), slot = arg32(c, 2);
+  uint32_t result = 1;
+  switch (cmd) {
+    case 0x10: stat_buf_ = arg32(c, 4); break;  // INIT {cmd, -, -, -, statBuf}
+    case 0x01: {                                // OPEN {cmd, port, slot, -, padArea}
+      areas_[static_cast<int>(port * 8 + slot)] = arg32(c, 4);
+      put32(c, 5, 0x001F0000 + port * 0x100);  // padBuf (IOP address, unused by the EE)
+      log::info(kSub, "pad port {} slot {} opened (pad area 0x{:08x})", port, slot, arg32(c, 4));
+      break;
+    }
+    case 0x0A: pressure_ = true; break;  // SET_BTNINFO: enable pressure-sensitive buttons
+    case 0x09: result = 0x3FFFF; break;  // GET_BTNMASK
+    case 0x0C: result = 2; break;        // GET_PORTMAX
+    case 0x0D: result = 1; break;        // GET_SLOTMAX
+    case 0x0E: areas_.erase(static_cast<int>(port * 8 + slot)); break;  // CLOSE
+    default: break;  // SET_MMODE, SET_ACTDIR/ALIGN, SET_VREF, END, GET_MODVER: accepted
+  }
+  put32(c, 3, result);
+}
+
+void PadService::update(const input::PadState& pad) {
+  ++frame_;
+  if (stat_buf_) {  // open_slot { u32 frame; u32 openSlots[2]; }
+    ee_.write<uint32_t>(stat_buf_, frame_);
+    ee_.write<uint32_t>(stat_buf_ + 4, 1);
+    ee_.write<uint32_t>(stat_buf_ + 8, 0);
+  }
+  for (const auto& [key, area] : areas_) {
+    const bool port0 = key < 8;                       // only port 0 has a controller attached
+    const uint32_t base = area + (frame_ & 1) * 128;  // alternate halves; EE reads the newer frame
+    uint8_t d[128] = {};
+    // data[32]: DualShock 2 report: ok, mode, buttons (active low), RX, RY, LX, LY, 12 pressures
+    d[0] = 0x00;
+    d[1] = 0x79;
+    const uint16_t btn = port0 ? pad.wire_buttons() : 0xFFFF;
+    d[2] = static_cast<uint8_t>(btn);
+    d[3] = static_cast<uint8_t>(btn >> 8);
+    using input::PadAxis;
+    using input::PadButton;
+    d[4] = port0 ? pad.axis(PadAxis::RightX) : 0x80;
+    d[5] = port0 ? pad.axis(PadAxis::RightY) : 0x80;
+    d[6] = port0 ? pad.axis(PadAxis::LeftX) : 0x80;
+    d[7] = port0 ? pad.axis(PadAxis::LeftY) : 0x80;
+    static constexpr PadButton kPressureOrder[12] = {
+        PadButton::Right, PadButton::Left,   PadButton::Up, PadButton::Down, PadButton::Triangle, PadButton::Circle,
+        PadButton::Cross, PadButton::Square, PadButton::L1, PadButton::R1,   PadButton::L2,       PadButton::R2};
+    for (int i = 0; i < 12; ++i) d[8 + i] = port0 ? pad.pressure[static_cast<size_t>(kPressureOrder[i])] : 0;
+    auto w32 = [&](int off, uint32_t v) { std::memcpy(&d[off], &v, 4); };
+    auto w16 = [&](int off, uint16_t v) { std::memcpy(&d[off], &v, 2); };
+    w16(80, 0x0004);  // modeTable: digital, DualShock
+    w16(82, 0x0007);
+    w32(88, frame_);         // frame
+    w32(92, 0);              // findPadRetries
+    w32(96, 20);             // length of the report
+    d[100] = 1;              // modeConfig
+    d[101] = 0x79;           // modeCurId (DualShock 2, analog)
+    d[102] = 3;              // model
+    d[103] = 1;              // buttonDataReady
+    d[104] = 2;              // nrOfModes
+    d[105] = 1;              // modeCurOffs
+    d[106] = 2;              // nrOfActuators
+    d[112] = port0 ? 6 : 0;  // state: STABLE (port 0) / DISCONN
+    d[113] = 0;              // reqState: COMPLETE
+    (void)pressure_;
+    ee_.load(base, d, sizeof d);
+  }
+}
+
 void IopHeapService::register_with(SifHle& sif) {
   sif.register_server(0x80000003, "iop-heap", [this](RpcCall& c) {
     switch (c.fno) {

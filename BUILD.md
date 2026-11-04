@@ -81,6 +81,11 @@ build/release/src/lantern-boot --extracted ~/.local/share/lantern/extracted/SLUS
 ```
 Prints a boot report: outcome, syscalls, threads, RPC servers used, unmodelled hardware.
 
+Add `--window` to play in a window (keyboard/controller per `~/.config/lantern/config.toml`,
+default: arrows = d-pad, Space = Cross, Escape/Return = Start, F11 fullscreen), `--seconds 0`
+is not supported yet; use a large value. `--dump-frames DIR` writes PNGs; `--press 600:cross`
+scripts input.
+
 Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
 
 ## Troubleshooting

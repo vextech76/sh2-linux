@@ -53,6 +53,10 @@ class Renderer {
   virtual const RendererInfo& info() const = 0;
   virtual FrameStatus begin_frame() = 0;
   virtual void draw_placeholder(const PlaceholderParams& params) = 0;
+  // Emulated display output: set the image (copied) before begin_frame(), then draw it inside the
+  // frame. Upload happens in begin_frame so it is ordered before rendering.
+  virtual void set_frame_image(const uint32_t* rgba, uint32_t width, uint32_t height) = 0;
+  virtual void draw_frame_image() = 0;
   virtual void end_frame() = 0;
   virtual void notify_resize() = 0;
   virtual void set_present_mode(PresentMode mode) = 0;

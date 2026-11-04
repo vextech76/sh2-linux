@@ -15,8 +15,10 @@ struct CliOptions {
   std::optional<Validation> validation;
   std::optional<std::string> log_level;
   std::optional<std::string> iso_path;
-  uint64_t frames = 0;              // 0 = run until closed
-  bool exercise_swapchain = false;  // test hook: resize window + switch present modes while running
+  uint64_t frames = 0;  // 0 = run until closed
+  bool exercise_swapchain = false;
+  bool exercise_image = false;  // test hook: upload + draw a generated image each frame  // test hook: resize window +
+                                // switch present modes while running
   bool list_gpus = false;
   bool print_config = false;
   bool write_default_config = false;

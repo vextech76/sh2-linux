@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "analysis/ps2_syscalls.h"
+#include "config/config.h"
 #include "core/log.h"
 #include "core/paths.h"
 #include "core/png.h"
@@ -24,13 +25,16 @@
 #include "ee/r5900.h"
 #include "gs/gs.h"
 #include "gs/rasterizer.h"
+#include "input/input_system.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
+#include "platform/sdl_platform.h"
 #include "ps2/boot.h"
 #include "ps2/hardware.h"
 #include "ps2/kernel.h"
 #include "ps2/vif.h"
+#include "render/renderer.h"
 
 namespace fs = std::filesystem;
 using namespace lantern;
@@ -165,6 +169,8 @@ int main(int argc, char** argv) {
   fs::path extracted, iso_path, game_lib;
   double seconds = 20;
   bool trace = false;
+  bool window = false;
+  std::vector<std::pair<uint64_t, input::PadButton>> presses;  // scripted input: (vblank, button)
   fs::path dump_dir;
   uint64_t dump_every = 60;
   for (int i = 1; i < argc; ++i) {
@@ -179,13 +185,25 @@ int main(int argc, char** argv) {
       seconds = std::stod(argv[++i]);
     else if (a == "--trace")
       trace = true;
-    else if (a == "--dump-frames" && i + 1 < argc)
+    else if (a == "--window")
+      window = true;
+    else if (a == "--press" && i + 1 < argc) {  // FRAME:button, e.g. 600:dpad_left (held 8 frames)
+      std::string spec = argv[++i];
+      auto colon = spec.find(':');
+      auto b = colon == std::string::npos ? std::nullopt : input::pad_button_from_name(spec.substr(colon + 1));
+      if (!b) {
+        std::fprintf(stderr, "lantern-boot: bad --press '%s' (use FRAME:cross|circle|dpad_left|...)\n", spec.c_str());
+        return 2;
+      }
+      presses.emplace_back(std::stoull(spec.substr(0, colon)), *b);
+    } else if (a == "--dump-frames" && i + 1 < argc)
       dump_dir = argv[++i];
     else if (a == "--dump-every" && i + 1 < argc)
       dump_every = std::stoull(argv[++i]);
     else {
       std::fputs(
-          "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--dump-frames DIR "
+          "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--window] "
+          "[--dump-frames DIR "
           "[--dump-every N]]\n",
           stderr);
       return 2;
@@ -234,6 +252,7 @@ int main(int argc, char** argv) {
         hw.write(a, data, size);
       });
   ps2::load_elf(*mem, *elf);
+  iop::PadService pad(*mem);
 
   // Graphics: GS + GIF paths, VIF1 + VU1 memory, DMA controller.
   auto gs = std::make_unique<gs::Gs>();
@@ -256,9 +275,56 @@ int main(int argc, char** argv) {
   reg(rt);
   ps2::Kernel kernel(*cpu, *mem, rt, hw);
   kernel.set_trace(trace);
+  // Optional window: SDL3 + Vulkan presentation of the GS display, input through InputSystem.
+  Config cfg;
+  if (auto cf = resolve_paths().config_file(); fs::exists(cf)) cfg = load_config(cf).config;
+  input::InputSystem input(cfg.input);
+  std::unique_ptr<platform::SdlPlatform> plat;
+  std::unique_ptr<render::Renderer> renderer;
+  if (window) {
+    plat = platform::SdlPlatform::create(true, &err);
+    if (!plat || !plat->create_window(cfg.graphics, "LANTERN - SLUS-20228 (experimental)", &err)) {
+      std::fprintf(stderr, "lantern-boot: %s\n", err.c_str());
+      return 1;
+    }
+    render::RendererCreateInfo rci;
+    rci.graphics = cfg.graphics;
+    rci.surface = plat.get();
+    rci.cache_dir = resolve_paths().cache_dir;
+    renderer = render::create_renderer(rci, &err);
+    if (!renderer) {
+      std::fprintf(stderr, "lantern-boot: %s\n", err.c_str());
+      return 1;
+    }
+  }
   if (!dump_dir.empty()) fs::create_directories(dump_dir);
   kernel.set_vblank_hook([&](uint64_t n) {
     gs->on_vblank();
+    if (plat) {
+      auto ev = plat->pump(input);
+      if (ev.quit) throw ps2::GuestExit{0};
+      if (ev.resized) renderer->notify_resize();
+      for (auto action : input.take_host_actions()) {
+        if (action == input::HostAction::ToggleFullscreen) plat->toggle_fullscreen();
+        if (action == input::HostAction::ToggleMouseCapture) plat->set_mouse_capture(!plat->mouse_captured());
+        if (action == input::HostAction::Quit) throw ps2::GuestExit{0};
+      }
+    }
+    auto padstate = input.sample();
+    for (const auto& [at, b] : presses)
+      if (n >= at && n < at + 8) {
+        padstate.buttons = static_cast<uint16_t>(padstate.buttons | (1u << static_cast<unsigned>(b)));
+        padstate.pressure[static_cast<size_t>(b)] = 255;
+      }
+    pad.update(padstate);
+    if (renderer) {
+      auto img = gs->display();
+      if (img.width) renderer->set_frame_image(img.rgba.data(), img.width, img.height);
+      if (renderer->begin_frame() == render::FrameStatus::Ready) {
+        if (img.width) renderer->draw_frame_image();
+        renderer->end_frame();
+      }
+    }
     if (dump_dir.empty() || n % dump_every) return;
     auto img = gs->display();
     if (img.width == 0) return;
@@ -274,6 +340,7 @@ int main(int argc, char** argv) {
   cdvd.register_with(sif);
   iop::IopHeapService iop_heap;
   iop_heap.register_with(sif);
+  pad.register_with(sif);
   iop::LoadfileService loadfile;
   loadfile.register_with(sif);
   g_cdvd = &cdvd;

@@ -12,6 +12,8 @@ class NullRenderer final : public Renderer {
     return FrameStatus::Ready;
   }
   void draw_placeholder(const PlaceholderParams&) override {}
+  void set_frame_image(const uint32_t*, uint32_t, uint32_t) override {}
+  void draw_frame_image() override {}
   void end_frame() override {
     if (in_frame_) ++frames_;
     in_frame_ = false;

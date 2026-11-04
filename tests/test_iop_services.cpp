@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include "input/pad.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso_builder.h"
@@ -132,4 +133,29 @@ TEST_CASE("disk ready, disc type, loader version and IOP heap") {
   const uint32_t a2 = r.ee->read<uint32_t>(kEeReply);
   CHECK(a1 == SifHle::kHeapBase);
   CHECK(a2 == a1 + 0x8000);
+}
+
+TEST_CASE("pad service: OPEN registers the pad area; update writes a DualShock 2 report") {
+  Rig r;
+  PadService pad(*r.ee);
+  pad.register_with(r.sif);
+  auto srv = r.bind(0x80000100);
+  const uint32_t area = 0x00600000;
+  r.call(srv, 1, words({0x01, 0, 0, 0, area}), 32);  // OPEN port 0 slot 0
+  CHECK(r.ee->read<uint32_t>(kEeReply + 12) == 1);
+  input::PadState s;
+  s.buttons = 1u << static_cast<unsigned>(input::PadButton::Cross);
+  s.pressure[static_cast<size_t>(input::PadButton::Cross)] = 200;
+  s.axes = {0, 128, 255, 128};
+  pad.update(s);  // frame 1 -> second half of the double buffer
+  const uint32_t half = area + 128;
+  CHECK(r.ee->read<uint8_t>(half + 1) == 0x79);                                 // DualShock 2 mode
+  CHECK(r.ee->read<uint16_t>(half + 2) == static_cast<uint16_t>(~(1u << 14)));  // active-low, Cross
+  CHECK(r.ee->read<uint8_t>(half + 6) == 0);                                    // LX
+  CHECK(r.ee->read<uint8_t>(half + 4) == 255);                                  // RX
+  CHECK(r.ee->read<uint8_t>(half + 8 + 6) == 200);                              // cross pressure
+  CHECK(r.ee->read<uint32_t>(half + 88) == 1);                                  // frame
+  CHECK(r.ee->read<uint8_t>(half + 112) == 6);                                  // PAD_STATE_STABLE
+  pad.update(input::PadState{});
+  CHECK(r.ee->read<uint32_t>(area + 88) == 2);  // alternates halves with a rising frame counter
 }

@@ -78,5 +78,6 @@ add_test(NAME gpu_list_devices COMMAND lantern --list-gpus)
 add_test(NAME gpu_vulkan_frames COMMAND lantern --backend vulkan --validation auto --frames 240)
 add_test(NAME gpu_vulkan_mailbox COMMAND lantern --backend vulkan --frames 120 --config ${CMAKE_CURRENT_SOURCE_DIR}/data/mailbox.toml)
 add_test(NAME gpu_vulkan_swapchain_recreate COMMAND lantern --backend vulkan --validation on --frames 200 --exercise-swapchain)
-set_tests_properties(gpu_list_devices gpu_vulkan_frames gpu_vulkan_mailbox gpu_vulkan_swapchain_recreate PROPERTIES
+add_test(NAME gpu_vulkan_image_upload COMMAND lantern --backend vulkan --validation on --frames 150 --exercise-image)
+set_tests_properties(gpu_list_devices gpu_vulkan_frames gpu_vulkan_mailbox gpu_vulkan_swapchain_recreate gpu_vulkan_image_upload PROPERTIES
   LABELS gpu RUN_SERIAL TRUE ENVIRONMENT "${SMOKE_ENV}")

@@ -17,6 +17,8 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
+| LAN-19 | padman HLE -> InputSystem | done | | |
+| LAN-20 | GS display in the Vulkan window | done | | |
 | LAN-13 | Choose a license | blocked | | Owner decision |
 | LAN-14 | Remove wrongly installed `volk-devel` (GNU Radio) | todo | | Owner action: `sudo dnf remove volk-devel` |
 | LAN-15 | MGF archive format analysis | todo | | |
@@ -24,8 +26,9 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-20: present the GS display through the Vulkan renderer in a window (`Renderer::present_image`),
-  then LAN-19 (padman -> InputSystem) so the player can answer the memory-card prompt, and an
-  mcserv HLE backed by $XDG_DATA_HOME/lantern/memcards so the prompt goes away.
+- LAN-21: exact PSMT8/PSMT4 in-block column tables (title-screen textures are scrambled), with
+  cross-format aliasing tests.
+- LAN-22: mcserv HLE (0x80000400) backed by $XDG_DATA_HOME/lantern/memcards.
+- LAN-23: run the game from the main `lantern` executable (session refactor of lantern-boot).
 - LAN-11 cont.: VU1 micro-mode interpreter (+ XGKICK PATH1) when the game first uploads microcode.
 - LAN-19: padman (0x80000100/101) wired to InputSystem; mcserv (0x80000400) on XDG memcards.

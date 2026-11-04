@@ -158,8 +158,21 @@ int run(const app::CliOptions& cli) {
     }
 
     const float t = static_cast<float>(SDL_GetTicksNS() - start) / 1e9f;
+    std::vector<uint32_t> test_image;
+    if (cli.exercise_image) {  // generated gradient; size changes mid-run to exercise recreation
+      const uint32_t w = frames < 60 ? 320 : 512, h = frames < 60 ? 224 : 448;
+      test_image.resize(size_t{w} * h);
+      for (uint32_t y = 0; y < h; ++y)
+        for (uint32_t x = 0; x < w; ++x)
+          test_image[size_t{y} * w + x] = 0xFF000000u | ((x * 255 / w) & 0xFF) | (((y * 255 / h) & 0xFF) << 8) |
+                                          (static_cast<uint32_t>(frames & 0xFF) << 16);
+      renderer->set_frame_image(test_image.data(), w, h);
+    }
     if (renderer->begin_frame() == render::FrameStatus::Ready) {
-      renderer->draw_placeholder({t});
+      if (cli.exercise_image)
+        renderer->draw_frame_image();
+      else
+        renderer->draw_placeholder({t});
       renderer->end_frame();
       ++frames;
     } else {

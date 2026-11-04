@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
 #include "ee/memory.h"
+#include "input/pad.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
 
@@ -48,6 +50,25 @@ class IopHeapService {
 
  private:
   uint32_t next_ = SifHle::kHeapBase;
+};
+
+// padman RPC servers (0x80000100/0x80000101, "new" libpad protocol per ps2sdk ee/rpc/pad). The
+// IOP refreshes a 2 x 128-byte pad_data_new buffer per opened pad every frame; update() does
+// that from the virtual DualShock 2 state.
+class PadService {
+ public:
+  explicit PadService(ee::Memory& ee) : ee_(ee) {}
+  void register_with(SifHle& sif);
+  void update(const input::PadState& pad);  // call once per VBlank
+  uint64_t opened() const { return areas_.size(); }
+
+ private:
+  void command(RpcCall& c);
+  ee::Memory& ee_;
+  std::map<int, uint32_t> areas_;  // (port * 8 + slot) -> EE padArea
+  uint32_t stat_buf_ = 0;
+  uint32_t frame_ = 0;
+  bool pressure_ = false;
 };
 
 // LOADFILE RPC server (0x80000006): the HLE IOP already provides every service the game needs at

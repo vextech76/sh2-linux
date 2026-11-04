@@ -37,6 +37,8 @@ CliResult parse_cli(const std::vector<std::string>& args) {
       o.help = true;
     } else if (a == "--version") {
       o.version = true;
+    } else if (a == "--exercise-image") {
+      o.exercise_image = true;
     } else if (a == "--exercise-swapchain") {
       o.exercise_swapchain = true;
     } else if (a == "--list-gpus") {

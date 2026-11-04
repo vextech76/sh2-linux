@@ -34,6 +34,9 @@ constexpr uint32_t kVertSpv[] =
 constexpr uint32_t kFragSpv[] =
 #include "placeholder.frag.spv.inc"
     ;
+constexpr uint32_t kImageFragSpv[] =
+#include "image.frag.spv.inc"
+    ;
 
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 constexpr const char* kSub = "vulkan";
@@ -272,6 +275,7 @@ class VulkanRenderer final : public Renderer {
     create_device();
     create_pipeline_cache();
     create_frames();
+    create_image_resources();
     if (!recreate_swapchain()) log::info(kSub, "window has zero size at startup; waiting for a resize");
   }
 
@@ -280,11 +284,17 @@ class VulkanRenderer final : public Renderer {
       vkDeviceWaitIdle(device_);
       save_pipeline_cache();
       destroy_pipeline();
+      destroy_frame_image();
+      if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
+      if (dpool_) vkDestroyDescriptorPool(device_, dpool_, nullptr);
+      if (dsl_) vkDestroyDescriptorSetLayout(device_, dsl_, nullptr);
       if (pipeline_cache_) vkDestroyPipelineCache(device_, pipeline_cache_, nullptr);
       for (auto& f : frames_) {
         vkDestroyCommandPool(device_, f.pool, nullptr);
         vkDestroyFence(device_, f.in_flight, nullptr);
         vkDestroySemaphore(device_, f.image_available, nullptr);
+        if (f.staging) vkDestroyBuffer(device_, f.staging, nullptr);
+        if (f.staging_mem) vkFreeMemory(device_, f.staging_mem, nullptr);
       }
       frames_.clear();
       destroy_swapchain_resources(swapchain_);
@@ -336,6 +346,8 @@ class VulkanRenderer final : public Renderer {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(f.cmd, &bi));
 
+    if (have_pending_) upload_pending(f);
+
     transition(f.cmd, images_[image_index_], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
@@ -373,6 +385,35 @@ class VulkanRenderer final : public Renderer {
       float ox, oy, w, h, time;
     } push{vp.x, vp.y, vp.width, vp.height, params.time_seconds};
     vkCmdPushConstants(f.cmd, pipeline_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    vkCmdDraw(f.cmd, 3, 1, 0, 0);
+  }
+
+  void set_frame_image(const uint32_t* rgba, uint32_t w, uint32_t h) override {
+    if (!w || !h) return;
+    pending_.assign(rgba, rgba + size_t{w} * h);
+    pending_w_ = w;
+    pending_h_ = h;
+    have_pending_ = true;
+  }
+
+  void draw_frame_image() override {
+    if (!in_frame_ || !img_ready_) return;
+    Frame& f = frames_[frame_index_];
+    VkRect2D rect = content_rect();
+    VkViewport vp{static_cast<float>(rect.offset.x),
+                  static_cast<float>(rect.offset.y),
+                  static_cast<float>(rect.extent.width),
+                  static_cast<float>(rect.extent.height),
+                  0.0f,
+                  1.0f};
+    vkCmdBindPipeline(f.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, img_pipeline_);
+    vkCmdBindDescriptorSets(f.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, img_layout_, 0, 1, &dset_, 0, nullptr);
+    vkCmdSetViewport(f.cmd, 0, 1, &vp);
+    vkCmdSetScissor(f.cmd, 0, 1, &rect);
+    struct {
+      float ox, oy, w, h, time;
+    } push{vp.x, vp.y, vp.width, vp.height, 0.0f};
+    vkCmdPushConstants(f.cmd, img_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     vkCmdDraw(f.cmd, 3, 1, 0, 0);
   }
 
@@ -424,7 +465,142 @@ class VulkanRenderer final : public Renderer {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence in_flight = VK_NULL_HANDLE;
     VkSemaphore image_available = VK_NULL_HANDLE;
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    void* staging_map = nullptr;
+    VkDeviceSize staging_size = 0;
   };
+
+  uint32_t find_memory(uint32_t type_bits, VkMemoryPropertyFlags props) {
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(physical_, &mp);
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
+      if ((type_bits & (1u << i)) && (mp.memoryTypes[i].propertyFlags & props) == props) return i;
+    throw VkError("no suitable Vulkan memory type");
+  }
+
+  void ensure_staging(Frame& f, VkDeviceSize size) {
+    if (f.staging_size >= size) return;
+    if (f.staging) {
+      vkDestroyBuffer(device_, f.staging, nullptr);
+      vkFreeMemory(device_, f.staging_mem, nullptr);
+    }
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = size;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VK_CHECK(vkCreateBuffer(device_, &bi, nullptr, &f.staging));
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(device_, f.staging, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex =
+        find_memory(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &f.staging_mem));
+    VK_CHECK(vkBindBufferMemory(device_, f.staging, f.staging_mem, 0));
+    VK_CHECK(vkMapMemory(device_, f.staging_mem, 0, size, 0, &f.staging_map));
+    f.staging_size = size;
+  }
+
+  void destroy_frame_image() {
+    if (img_view_) vkDestroyImageView(device_, img_view_, nullptr);
+    if (img_) vkDestroyImage(device_, img_, nullptr);
+    if (img_mem_) vkFreeMemory(device_, img_mem_, nullptr);
+    img_view_ = VK_NULL_HANDLE;
+    img_ = VK_NULL_HANDLE;
+    img_mem_ = VK_NULL_HANDLE;
+    img_w_ = img_h_ = 0;
+    img_ready_ = false;
+  }
+
+  void ensure_frame_image(uint32_t w, uint32_t h) {
+    if (img_ && img_w_ == w && img_h_ == h) return;
+    vkDeviceWaitIdle(device_);
+    destroy_frame_image();
+    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ii.imageType = VK_IMAGE_TYPE_2D;
+    ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ii.extent = {w, h, 1};
+    ii.mipLevels = 1;
+    ii.arrayLayers = 1;
+    ii.samples = VK_SAMPLE_COUNT_1_BIT;
+    ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(device_, &ii, nullptr, &img_));
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, img_, &req);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = find_memory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &img_mem_));
+    VK_CHECK(vkBindImageMemory(device_, img_, img_mem_, 0));
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = img_;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(device_, &vi, nullptr, &img_view_));
+    img_w_ = w;
+    img_h_ = h;
+    VkDescriptorImageInfo di{sampler_, img_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wr{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    wr.dstSet = dset_;
+    wr.descriptorCount = 1;
+    wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.pImageInfo = &di;
+    vkUpdateDescriptorSets(device_, 1, &wr, 0, nullptr);
+  }
+
+  // Record the copy of the pending CPU image into the display texture (before rendering begins).
+  void upload_pending(Frame& f) {
+    have_pending_ = false;
+    const VkDeviceSize bytes = VkDeviceSize{pending_w_} * pending_h_ * 4;
+    ensure_frame_image(pending_w_, pending_h_);
+    ensure_staging(f, bytes);
+    std::memcpy(f.staging_map, pending_.data(), static_cast<size_t>(bytes));
+    transition_image(f.cmd, img_, img_ready_ ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {pending_w_, pending_h_, 1};
+    vkCmdCopyBufferToImage(f.cmd, f.staging, img_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    transition_image(f.cmd, img_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    img_ready_ = true;
+  }
+
+  static void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to,
+                               VkPipelineStageFlags2 ss, VkAccessFlags2 sa, VkPipelineStageFlags2 ds,
+                               VkAccessFlags2 da) {
+    transition(cmd, image, from, to, ss, sa, ds, da);
+  }
+
+  void create_image_resources() {
+    VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    si.magFilter = VK_FILTER_LINEAR;  // upscaling the 640x448-class image to the window
+    si.minFilter = VK_FILTER_LINEAR;
+    si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VK_CHECK(vkCreateSampler(device_, &si, nullptr, &sampler_));
+    VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   nullptr};
+    VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    li.bindingCount = 1;
+    li.pBindings = &b;
+    VK_CHECK(vkCreateDescriptorSetLayout(device_, &li, nullptr, &dsl_));
+    VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pi.maxSets = 1;
+    pi.poolSizeCount = 1;
+    pi.pPoolSizes = &ps;
+    VK_CHECK(vkCreateDescriptorPool(device_, &pi, nullptr, &dpool_));
+    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = dpool_;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &dsl_;
+    VK_CHECK(vkAllocateDescriptorSets(device_, &ai, &dset_));
+  }
 
   void pick_device() {
     std::vector<std::string> rejected;
@@ -666,15 +842,29 @@ class VulkanRenderer final : public Renderer {
     return m;
   }
 
-  void create_pipeline(VkFormat color_format) {
+  VkPipelineLayout make_layout(const VkDescriptorSetLayout* set_layout) {
     VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float) * 5};
     VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
-    VK_CHECK(vkCreatePipelineLayout(device_, &lci, nullptr, &pipeline_layout_));
+    lci.setLayoutCount = set_layout ? 1 : 0;
+    lci.pSetLayouts = set_layout;
+    VkPipelineLayout layout;
+    VK_CHECK(vkCreatePipelineLayout(device_, &lci, nullptr, &layout));
+    return layout;
+  }
 
+  void create_pipeline(VkFormat color_format) {
+    pipeline_layout_ = make_layout(nullptr);
+    pipeline_ = build_pipeline(pipeline_layout_, kFragSpv, sizeof(kFragSpv), color_format);
+    img_layout_ = make_layout(&dsl_);
+    img_pipeline_ = build_pipeline(img_layout_, kImageFragSpv, sizeof(kImageFragSpv), color_format);
+    pipeline_format_ = color_format;
+  }
+
+  VkPipeline build_pipeline(VkPipelineLayout layout, const uint32_t* frag, size_t frag_bytes, VkFormat color_format) {
     VkShaderModule vs = shader(kVertSpv, sizeof(kVertSpv));
-    VkShaderModule fs = shader(kFragSpv, sizeof(kFragSpv));
+    VkShaderModule fs = shader(frag, frag_bytes);
     VkPipelineShaderStageCreateInfo stages[2] = {{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO},
                                                  {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -721,17 +911,22 @@ class VulkanRenderer final : public Renderer {
     pci.pMultisampleState = &ms;
     pci.pColorBlendState = &cb;
     pci.pDynamicState = &ds;
-    pci.layout = pipeline_layout_;
-    VkResult r = vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pci, nullptr, &pipeline_);
+    pci.layout = layout;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    VkResult r = vkCreateGraphicsPipelines(device_, pipeline_cache_, 1, &pci, nullptr, &pipe);
     vkDestroyShaderModule(device_, vs, nullptr);
     vkDestroyShaderModule(device_, fs, nullptr);
     check(r, "vkCreateGraphicsPipelines");
-    pipeline_format_ = color_format;
+    return pipe;
   }
 
   void destroy_pipeline() {
     if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
     if (pipeline_layout_) vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
+    if (img_pipeline_) vkDestroyPipeline(device_, img_pipeline_, nullptr);
+    if (img_layout_) vkDestroyPipelineLayout(device_, img_layout_, nullptr);
+    img_pipeline_ = VK_NULL_HANDLE;
+    img_layout_ = VK_NULL_HANDLE;
     pipeline_ = VK_NULL_HANDLE;
     pipeline_layout_ = VK_NULL_HANDLE;
     pipeline_format_ = VK_FORMAT_UNDEFINED;
@@ -788,6 +983,21 @@ class VulkanRenderer final : public Renderer {
   VkPipelineLayout pipeline_layout_ = VK_NULL_HANDLE;
   VkPipeline pipeline_ = VK_NULL_HANDLE;
   VkFormat pipeline_format_ = VK_FORMAT_UNDEFINED;
+  // Emulated display texture
+  std::vector<uint32_t> pending_;
+  uint32_t pending_w_ = 0, pending_h_ = 0;
+  bool have_pending_ = false;
+  VkImage img_ = VK_NULL_HANDLE;
+  VkDeviceMemory img_mem_ = VK_NULL_HANDLE;
+  VkImageView img_view_ = VK_NULL_HANDLE;
+  uint32_t img_w_ = 0, img_h_ = 0;
+  bool img_ready_ = false;
+  VkSampler sampler_ = VK_NULL_HANDLE;
+  VkDescriptorSetLayout dsl_ = VK_NULL_HANDLE;
+  VkDescriptorPool dpool_ = VK_NULL_HANDLE;
+  VkDescriptorSet dset_ = VK_NULL_HANDLE;
+  VkPipelineLayout img_layout_ = VK_NULL_HANDLE;
+  VkPipeline img_pipeline_ = VK_NULL_HANDLE;
   uint32_t frame_index_ = 0;
   uint32_t image_index_ = 0;
   uint64_t frames_presented_ = 0;
