@@ -355,9 +355,14 @@ and `common/include/libmc-common.h` structures):
 a formatted PS2 card with 8184 KB free, and boots straight to the Konami logo and title screen.
 
 **Open (LAN-27):** the title screen still ignores Start/Cross, so the main menu is unreachable.
-The card is not the cause (the prompt is gone); the remaining suspects are the sound system
-(Stage 9) and the pad state machine. File-level card operations (list/create/read/write a save)
-are plumbed but unexercised until the game can reach its menus.
+Ruled out so far, each with evidence: the memory card (prompt gone, GETINFO answered), the pad
+handshake (one OPEN per port, correct command-word dispatch — it used to reopen 326 times because
+the service dispatched on the RPC *function* number instead of the command word), thread health
+(4 threads ready, no deadlock) and sound readiness (a PLACEHOLDER that answers "ready" for the
+Konami/SDR servers does not change it). Remaining suspects: the pad state machine details
+(`padGetState`/`reqState` semantics), the sound *streaming* threads that SH2 starts for music, or a
+wait inside the title task itself. Next: trace the title task's own loop (thread 1 backtrace at the
+title) instead of the service side.
 
 ## 9. Known limitations / risks
 

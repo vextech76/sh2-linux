@@ -110,6 +110,13 @@ void SifHle::handle_command(uint32_t a) {
       }
       if (auto it = servers_.find(sid); it != servers_.end()) {
         it->second.fn(call);
+      } else if (placeholder_ && (sid == 0x15 || sid == 0x80000701 || sid == 0x80000101)) {
+        // PLACEHOLDER sound driver: report "ready" so the guest's audio init can complete. No audio
+        // is produced (the game's own sound modules and SPU2 are Stage 9).
+        if (stats_.placeholder_calls[sid]++ == 0)
+          log::warn(kSub, "PLACEHOLDER: sound driver 0x{:08x} answers \"ready\" (no audio output yet)", sid);
+        if (!call.result.empty()) std::memset(call.result.data(), 0, call.result.size());
+        if (call.result.size() >= 4) call.result[0] = 1;
       } else if (stats_.placeholder_calls[sid]++ < 3) {
         log::warn(kSub, "PLACEHOLDER: RPC {} function {} answered with zeros ({} bytes)", server_name(sid), fno,
                   recv_size);

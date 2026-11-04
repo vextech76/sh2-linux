@@ -61,6 +61,7 @@ class PadService {
   void register_with(SifHle& sif);
   void update(const input::PadState& pad);  // call once per VBlank
   uint64_t opened() const { return areas_.size(); }
+  const std::map<uint32_t, uint64_t>& unknown_commands() const { return unknown_commands_; }
 
  private:
   void command(RpcCall& c);
@@ -69,6 +70,7 @@ class PadService {
   uint32_t stat_buf_ = 0;
   uint32_t frame_ = 0;
   bool pressure_ = false;
+  std::map<uint32_t, uint64_t> unknown_commands_;  // padman command word -> calls
 };
 
 // LOADFILE RPC server (0x80000006): the HLE IOP already provides every service the game needs at

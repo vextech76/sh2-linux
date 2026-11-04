@@ -191,7 +191,12 @@ int main(int argc, char** argv) {
   char mc_probe = 'A';
   uint64_t stop_frame = 0;             // stop after this many guest frames (0 = no limit)
   int swizzle_t8 = 0, swizzle_t4 = 0;  // indexed in-block orders under test (see gs/gs_memory.cpp)
-  std::vector<std::pair<uint64_t, input::PadButton>> presses;  // scripted input: (vblank, button)
+  struct Press {
+    uint64_t at;
+    input::PadButton button;
+    uint64_t frames;
+  };
+  std::vector<Press> presses;  // scripted input: (vblank, button, duration)
   fs::path dump_dir, texture_dir;
   uint64_t dump_every = 60;
   for (int i = 1; i < argc; ++i) {
@@ -221,13 +226,17 @@ int main(int argc, char** argv) {
       turbo = true;                             // one game frame per VBlank, unpaced (automated checks only)
     else if (a == "--press" && i + 1 < argc) {  // FRAME:button, e.g. 600:dpad_left (held 8 frames)
       std::string spec = argv[++i];
-      auto colon = spec.find(':');
-      auto b = colon == std::string::npos ? std::nullopt : input::pad_button_from_name(spec.substr(colon + 1));
-      if (!b) {
-        std::fprintf(stderr, "lantern-boot: bad --press '%s' (use FRAME:cross|circle|dpad_left|...)\n", spec.c_str());
+      const auto c1 = spec.find(':');
+      const auto c2 = c1 == std::string::npos ? std::string::npos : spec.find(':', c1 + 1);
+      const std::string name =
+          c1 == std::string::npos ? "" : spec.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
+      auto b = input::pad_button_from_name(name);
+      if (!b || c1 == std::string::npos) {
+        std::fprintf(stderr, "lantern-boot: bad --press '%s' (use FRAME:button[:frames])\n", spec.c_str());
         return 2;
       }
-      presses.emplace_back(std::stoull(spec.substr(0, colon)), *b);
+      presses.push_back(
+          {std::stoull(spec.substr(0, c1)), *b, c2 == std::string::npos ? 8u : std::stoull(spec.substr(c2 + 1))});
     } else if (a == "--dump-frames" && i + 1 < argc)
       dump_dir = argv[++i];
     else if (a == "--dump-textures" && i + 1 < argc)
@@ -357,10 +366,10 @@ int main(int argc, char** argv) {
       }
     }
     auto padstate = input.sample();
-    for (const auto& [at, b] : presses)
-      if (n >= at && n < at + 8) {
-        padstate.buttons = static_cast<uint16_t>(padstate.buttons | (1u << static_cast<unsigned>(b)));
-        padstate.pressure[static_cast<size_t>(b)] = 255;
+    for (const auto& pr : presses)
+      if (n >= pr.at && n < pr.at + pr.frames) {
+        padstate.buttons = static_cast<uint16_t>(padstate.buttons | (1u << static_cast<unsigned>(pr.button)));
+        padstate.pressure[static_cast<size_t>(pr.button)] = 255;
       }
     pad.update(padstate);
     if (renderer) {

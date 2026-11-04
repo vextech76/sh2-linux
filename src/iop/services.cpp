@@ -150,25 +150,41 @@ void PadService::register_with(SifHle& sif) {
 }
 
 void PadService::command(RpcCall& c) {
-  // The reply is the same union buffer the EE sent, with results at word 3 (and padBuf at 5).
+  // padman RPC: the function number is always 1; the *command* is the first word of the buffer
+  // (ps2sdk libpad: PAD_RPCCMD_*). Layout of the request/reply union:
+  //   0 command, 4 port, 8 slot, 12 unused, 16 padArea / statBuf, 20 padBuf (open reply)
+  //   12 result (padResult / padOpenResult).
   c.result.assign(c.args.begin(), c.args.end());
   if (c.result.size() < c.recv_size) c.result.resize(c.recv_size, 0);
   const uint32_t cmd = arg32(c, 0), port = arg32(c, 1), slot = arg32(c, 2);
   uint32_t result = 1;
   switch (cmd) {
-    case 0x10: stat_buf_ = arg32(c, 4); break;  // INIT {cmd, -, -, -, statBuf}
-    case 0x01: {                                // OPEN {cmd, port, slot, -, padArea}
-      areas_[static_cast<int>(port * 8 + slot)] = arg32(c, 4);
-      put32(c, 5, 0x001F0000 + port * 0x100);  // padBuf (IOP address, unused by the EE)
-      log::info(kSub, "pad port {} slot {} opened (pad area 0x{:08x})", port, slot, arg32(c, 4));
+    case 0x10: stat_buf_ = arg32(c, 4); break;  // INIT: open_slot buffer
+    case 0x01: {                                // OPEN
+      const uint32_t area = arg32(c, 4);
+      areas_[static_cast<int>(port * 8 + slot)] = area;
+      put32(c, 5, 0x001F0000 + port * 0x100);  // padBuf (IOP address)
+      log::info(kSub, "pad port {} slot {} open, pad area 0x{:08x}", port, slot, area);
       break;
     }
-    case 0x0A: pressure_ = true; break;  // SET_BTNINFO: enable pressure-sensitive buttons
-    case 0x09: result = 0x3FFFF; break;  // GET_BTNMASK
+    case 0x0E:  // CLOSE
+    case 0x0F:  // END
+      areas_.erase(static_cast<int>(port * 8 + slot));
+      break;
+    case 0x12: result = 0x0200; break;   // GET_MODVER: padman 2.00+
+    case 0x09: result = 0x3FFFF; break;  // GET_BTNMASK: all buttons
     case 0x0C: result = 2; break;        // GET_PORTMAX
     case 0x0D: result = 1; break;        // GET_SLOTMAX
-    case 0x0E: areas_.erase(static_cast<int>(port * 8 + slot)); break;  // CLOSE
-    default: break;  // SET_MMODE, SET_ACTDIR/ALIGN, SET_VREF, END, GET_MODVER: accepted
+    case 0x0A: pressure_ = true; break;  // SET_BTNINFO: pressure on
+    case 0x06:                           // SET_MMODE
+    case 0x07:                           // SET_ACTDIR
+    case 0x08:                           // SET_ACTALIGN
+    case 0x0B:                           // SET_VREF
+      break;                             // accepted
+    default:
+      if (++unknown_commands_[cmd] == 1)
+        log::warn(kSub, "PLACEHOLDER: padman command 0x{:02x} not modelled (port {} slot {})", cmd, port, slot);
+      break;
   }
   put32(c, 3, result);
 }

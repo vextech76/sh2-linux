@@ -219,3 +219,25 @@ TEST_CASE("mcserv protocol: INIT reports feature levels, GETINFO writes the end-
   CHECK(mc.stats().commands.at(0x7D) == 1);
   std::filesystem::remove(path);
 }
+
+TEST_CASE("padman dispatches on the command word, not the RPC function number") {
+  Rig r;
+  PadService pad(*r.ee);
+  pad.register_with(r.sif);
+  auto srv = r.bind(0x80000100);
+  // padman always calls function 1; the command is word 0 of the buffer. Every call used to be
+  // treated as OPEN, which made the game reopen the pad hundreds of times.
+  r.call(srv, 1, words({0x0C, 0, 0, 0}), 32);  // GET_PORTMAX
+  CHECK(r.ee->read<uint32_t>(kEeReply + 12) == 2);
+  r.call(srv, 1, words({0x0D, 0, 0, 0}), 32);  // GET_SLOTMAX
+  CHECK(r.ee->read<uint32_t>(kEeReply + 12) == 1);
+  const uint32_t area = 0x00640000;
+  r.call(srv, 1, words({0x01, 0, 0, 0, area}), 32);  // OPEN port 0 slot 0
+  CHECK(r.ee->read<uint32_t>(kEeReply + 12) == 1);   // result
+  CHECK(r.ee->read<uint32_t>(kEeReply + 20) != 0);   // padBuf
+  CHECK(pad.opened() == 1);
+  r.call(srv, 1, words({0x12, 0, 0, 0}), 32);  // GET_MODVER, not an open
+  CHECK(r.ee->read<uint32_t>(kEeReply + 12) == 0x200);
+  CHECK(pad.opened() == 1);
+  CHECK(pad.unknown_commands().empty());
+}

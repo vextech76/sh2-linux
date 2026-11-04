@@ -18,7 +18,9 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-22 | Memory card model + mcserv protocol (info path) | done | | game detects a formatted 8184 KB card |
-| LAN-27 | Title screen ignores input (menu unreachable) | todo | | card ruled out; suspect sound init / pad state |
+| LAN-27 | Title screen ignores input (menu unreachable) | in_progress | | card, pad handshake, threads, sound-ready ruled out |
+| LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
+| LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |
 | LAN-25 | Follow guest continuations in recompiled calls | done | | found by reaching the title screen |
 | LAN-26 | Turbo mode stalls boot (timing divergence) | todo | | paced mode works; investigate before using turbo for behaviour |
 | LAN-19 | padman HLE -> InputSystem | done | | |

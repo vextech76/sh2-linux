@@ -48,6 +48,8 @@ class SifHle final : public ps2::SifEndpoint {
   explicit SifHle(ee::Memory& ee_mem) : ee_(ee_mem), iop_ram_(kIopRamSize) {}
 
   void set_reset_hook(std::function<void()> fn) { reset_hook_ = std::move(fn); }
+  // Answer otherwise-unserved sound-driver RPCs with "ready" (PLACEHOLDER: no audio output).
+  void set_sound_placeholder(bool on) { placeholder_ = on; }
   void register_server(uint32_t sid, std::string name, RpcServer fn) {
     servers_[sid] = {std::move(name), std::move(fn)};
   }
@@ -88,6 +90,7 @@ class SifHle final : public ps2::SifEndpoint {
   uint32_t next_handle_ = 0x00180000;
   Stats stats_;
   std::function<void()> reset_hook_;
+  bool placeholder_ = true;
 };
 
 std::string sif_command_name(uint32_t cid);
