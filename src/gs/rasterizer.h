@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 
 #include "gs/gs.h"
 
@@ -15,6 +16,7 @@ class Rasterizer {
 
   struct Stats {
     uint64_t triangles = 0, sprites = 0, lines = 0, points = 0, pixels_written = 0, pixels_tested = 0;
+    std::map<uint32_t, uint64_t> texture_samples;  // PSM -> textured pixels (which formats the game uses)
   };
   const Stats& stats() const { return stats_; }
 

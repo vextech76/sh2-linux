@@ -276,10 +276,23 @@ EE ──DMA ch1──▶ VIF1 ──DIRECT──▶ GIF PATH2 ─┐
 - **GS**: general registers, host→local and local→local transfers, CLUT loading (CLD modes,
   CSM1, CSA), FINISH/SIGNAL → CSR + INTC 0, privileged registers, display composition including
   interlaced frame mode.
-- **Local memory**: CT32/24/16/16S and Z formats use the GS manual's block/column tables
-  (bijectivity and known-address tests). **Approximation:** 8/4-bit formats use the correct
-  page/block geometry with provisional in-block pixel order — exact when a texture is uploaded
-  and sampled in the same format (what SLUS-20228 does so far); aliasing tricks would break.
+- **Local memory** (`src/gs/gs_memory.cpp`): the layout is expressed as *page geometry + block
+  arrangement + in-block bit order* (offset bit *i* is fed by coordinate bit x*k*/y*k*).
+  - Block arrangement and page geometry: documented GS organisation; unchanged from the version
+    that renders the game's 32-bit font pixel-exactly.
+  - CT32 and CT16 orders were derived from the two swizzle tables that are demonstrably correct on
+    screen; a unit test checks the generated tables reproduce them exactly, and the CT16 order is
+    exactly the CT32 order with the extra x bit below x0 (the rule used to extend to finer
+    formats).
+  - PSMT8/PSMT4 in-block order is **not** published in the freely available public documentation
+    (ps2tek documents the GS registers, GIF/VIF paths and IOP, but not these tables), so it was
+    identified **by measurement against the game itself** (no emulator source used or consulted):
+    each candidate order was rendered and compared (`--swizzle-variant T8[,T4]`, dump frames,
+    inspect). T8: the order `y3,x3,x0,y0,x1,x2,y1,y2` makes the game's title logo legible while
+    the three alternatives produce noise — decisive.
+  - **T4 status: derived, not yet verified.** It follows the same rule (extras x4,x3,y3 below the
+    base) but no screen has yet exercised a 4-bit texture where candidate orders differ visibly;
+    the sweep harness is retained for verification.
 - **Software rasterizer** (`src/gs/rasterizer.*`): points, lines, triangles/strips/fans
   (top-left fill rule), sprites; flat/Gouraud; STQ/UV texturing with nearest or bilinear
   (TEX1.MMAG) sampling, four wrap modes, CT/indexed+CLUT formats, TEXA; MODULATE/DECAL/

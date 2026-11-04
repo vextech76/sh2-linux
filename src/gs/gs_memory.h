@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace lantern::gs {
@@ -40,11 +41,17 @@ class LocalMemory {
 
   uint32_t* words() { return mem_.data(); }
 
-  // 8/4-bit indexed formats. Page and block geometry follow the GS manual; the pixel order
-  // *inside* a block is provisional (row-major) until verified tables are added, which is exact
-  // whenever data is uploaded and sampled in the same format (APPROXIMATION, see DESIGN.md).
   uint32_t read_index(uint32_t psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y) const;
   void write_index(uint32_t psm, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y, uint32_t v);
+
+  // In-block offset (in format units) for a pixel inside its block, derived from the per-format
+  // bit order below. Exposed for tests.
+  static uint32_t in_block_offset(uint32_t psm, uint32_t x, uint32_t y);
+  // The bit order in use for a format, e.g. "x3,x0,y0,x1,x2,y1,y2".
+  static std::string bit_order_name(uint32_t psm);
+  // Variant selection for the indexed formats (empirical, see DESIGN.md): 0 = derived default.
+  static void set_indexed_variant(int t8_variant, int t4_variant);
+  static int indexed_variant(uint32_t psm);
 
  private:
   std::vector<uint32_t> mem_;

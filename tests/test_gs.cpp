@@ -213,3 +213,39 @@ TEST_CASE("VIF1: DIRECT to GIF, skipping UNPACK V4-32 and MPG") {
   CHECK(m[0] == 0xAAAAAAAA);
   CHECK(vif.stats().direct_qwords == 2);
 }
+
+TEST_CASE("in-block order: generated CT32/CT16 tables match the validated hand tables") {
+  // These two tables are validated on screen (the game's 32-bit font renders pixel-exactly).
+  const uint32_t ct32[8][8] = {{0, 1, 4, 5, 8, 9, 12, 13},       {2, 3, 6, 7, 10, 11, 14, 15},
+                               {16, 17, 20, 21, 24, 25, 28, 29}, {18, 19, 22, 23, 26, 27, 30, 31},
+                               {32, 33, 36, 37, 40, 41, 44, 45}, {34, 35, 38, 39, 42, 43, 46, 47},
+                               {48, 49, 52, 53, 56, 57, 60, 61}, {50, 51, 54, 55, 58, 59, 62, 63}};
+  for (uint32_t y = 0; y < 8; ++y)
+    for (uint32_t x = 0; x < 8; ++x) CHECK(LocalMemory::in_block_offset(kCt32, x, y) == ct32[y][x]);
+  const uint32_t ct16[8][16] = {{0, 2, 8, 10, 16, 18, 24, 26, 1, 3, 9, 11, 17, 19, 25, 27},
+                                {4, 6, 12, 14, 20, 22, 28, 30, 5, 7, 13, 15, 21, 23, 29, 31},
+                                {32, 34, 40, 42, 48, 50, 56, 58, 33, 35, 41, 43, 49, 51, 57, 59},
+                                {36, 38, 44, 46, 52, 54, 60, 62, 37, 39, 45, 47, 53, 55, 61, 63},
+                                {64, 66, 72, 74, 80, 82, 88, 90, 65, 67, 73, 75, 81, 83, 89, 91},
+                                {68, 70, 76, 78, 84, 86, 92, 94, 69, 71, 77, 79, 85, 87, 93, 95},
+                                {96, 98, 104, 106, 112, 114, 120, 122, 97, 99, 105, 107, 113, 115, 121, 123},
+                                {100, 102, 108, 110, 116, 118, 124, 126, 101, 103, 109, 111, 117, 119, 125, 127}};
+  for (uint32_t y = 0; y < 8; ++y)
+    for (uint32_t x = 0; x < 16; ++x) CHECK(LocalMemory::in_block_offset(kCt16, x, y) == ct16[y][x]);
+  CHECK(LocalMemory::bit_order_name(kCt32) == "y2,y1,x2,x1,y0,x0");
+  CHECK(LocalMemory::bit_order_name(kCt16) == "y2,y1,x2,x1,y0,x0,x3");
+}
+
+TEST_CASE("indexed formats: in-block offsets are bijective per block for every variant") {
+  for (int v = 0; v <= 4; ++v) {
+    LocalMemory::set_indexed_variant(v, v);
+    std::set<uint32_t> t8, t4;
+    for (uint32_t y = 0; y < 16; ++y)
+      for (uint32_t x = 0; x < 16; ++x) t8.insert(LocalMemory::in_block_offset(kT8, x, y));
+    for (uint32_t y = 0; y < 16; ++y)
+      for (uint32_t x = 0; x < 32; ++x) t4.insert(LocalMemory::in_block_offset(kT4, x, y));
+    CHECK(t8.size() == 256);
+    CHECK(t4.size() == 512);
+  }
+  LocalMemory::set_indexed_variant(0, 0);
+}

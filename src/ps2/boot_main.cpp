@@ -130,11 +130,16 @@ struct Report {
           g.image_transfers, g.image_pixels, g.local_copies, g.primitives, g.finish);
       if (g_raster) {
         const auto& rs = g_raster->stats();
+        r += "  texture samples by PSM:";
+        for (const auto& [psm, n] : rs.texture_samples) r += std::format(" 0x{:02x}:{}", psm, n);
+        r += "\n";
         r += std::format("  rasterized: {} triangles, {} sprites, {} lines, {} points; {} pixels written ({} tested)\n",
                          rs.triangles, rs.sprites, rs.lines, rs.points, rs.pixels_written, rs.pixels_tested);
       }
       for (const auto& [t, n] : g.kicks) r += std::format("  prim type {} vertex kicks x{}\n", t, n);
       for (const auto& [p, n] : g.unsupported_psm) r += std::format("  unsupported PSM 0x{:02x} x{}\n", p, n);
+      r += std::format("  T8 order [{}] T4 order [{}]\n", gs::LocalMemory::bit_order_name(gs::kT8),
+                       gs::LocalMemory::bit_order_name(gs::kT4));
       r += std::format("  PMODE 0x{:x} DISPFB2 0x{:x} DISPLAY2 0x{:x} SMODE2 0x{:x}\n", g_gs->priv(0), g_gs->priv(0x90),
                        g_gs->priv(0xA0), g_gs->priv(0x20));
     }
@@ -170,6 +175,7 @@ int main(int argc, char** argv) {
   double seconds = 20;
   bool trace = false;
   bool window = false;
+  int swizzle_t8 = 0, swizzle_t4 = 0;  // indexed in-block orders under test (see gs/gs_memory.cpp)
   std::vector<std::pair<uint64_t, input::PadButton>> presses;  // scripted input: (vblank, button)
   fs::path dump_dir;
   uint64_t dump_every = 60;
@@ -185,7 +191,12 @@ int main(int argc, char** argv) {
       seconds = std::stod(argv[++i]);
     else if (a == "--trace")
       trace = true;
-    else if (a == "--window")
+    else if (a == "--swizzle-variant" && i + 1 < argc) {  // "T8" or "T8,T4"
+      std::string spec = argv[++i];
+      auto comma = spec.find(',');
+      swizzle_t8 = std::stoi(spec.substr(0, comma));
+      if (comma != std::string::npos) swizzle_t4 = std::stoi(spec.substr(comma + 1));
+    } else if (a == "--window")
       window = true;
     else if (a == "--press" && i + 1 < argc) {  // FRAME:button, e.g. 600:dpad_left (held 8 frames)
       std::string spec = argv[++i];
@@ -204,7 +215,7 @@ int main(int argc, char** argv) {
       std::fputs(
           "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--window] "
           "[--dump-frames DIR "
-          "[--dump-every N]]\n",
+          "[--dump-every N] [--swizzle-variant N]\n",
           stderr);
       return 2;
     }
@@ -255,6 +266,7 @@ int main(int argc, char** argv) {
   iop::PadService pad(*mem);
 
   // Graphics: GS + GIF paths, VIF1 + VU1 memory, DMA controller.
+  gs::LocalMemory::set_indexed_variant(swizzle_t8, swizzle_t4);
   auto gs = std::make_unique<gs::Gs>();
   gs::Gif gif_path2(*gs), gif_path3(*gs);
   auto vu1 = std::make_unique<ps2::Vu1Memory>();
