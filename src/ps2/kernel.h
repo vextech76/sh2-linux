@@ -65,6 +65,12 @@ class Kernel final : public ee::Hooks {
   };
   const Stats& stats() const { return stats_; }
   std::string describe_threads() const;
+  struct ThreadContext {
+    int id;
+    bool running;
+    uint32_t sp, ra;
+  };
+  std::vector<ThreadContext> thread_contexts() const;
 
   static constexpr uint32_t kReturnSentinel = 0x00000100;  // guest "return to kernel" address
 

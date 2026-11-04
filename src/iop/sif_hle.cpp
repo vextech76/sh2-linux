@@ -8,8 +8,7 @@
 namespace lantern::iop {
 namespace {
 constexpr const char* kSub = "sif";
-// Per-server IOP buffers handed out in bind replies (where the EE DMAs call arguments).
-constexpr uint32_t kServerBufferBase = 0x00100000, kServerBufferStride = 0x10000;
+constexpr uint32_t kServerBufferBase = SifHle::kServerBufferBase, kServerBufferStride = SifHle::kServerBufferStride;
 }  // namespace
 
 std::string sif_command_name(uint32_t cid) {
@@ -100,6 +99,15 @@ void SifHle::handle_command(uint32_t a) {
       // Arguments were DMA'd to the server buffer returned at bind time.
       call.args.resize(std::min(send_size, kServerBufferStride));
       for (size_t i = 0; i < call.args.size(); ++i) call.args[i] = iop_ram_[(buff + i) % kIopRamSize];
+      if (log::min_level() <= log::Level::Debug && stats_.calls[{sid, fno}] <= 3) {
+        std::string hex, txt;
+        for (size_t i = 0; i < std::min<size_t>(call.args.size(), 96); ++i) {
+          hex += std::format("{:02x}", call.args[i]);
+          txt += call.args[i] >= 0x20 && call.args[i] < 0x7F ? static_cast<char>(call.args[i]) : '.';
+        }
+        log::debug(kSub, "RPC {} fn {} send {} recv {} buff 0x{:x} args {} |{}|", server_name(sid), fno, send_size,
+                   recv_size, buff, hex, txt);
+      }
       if (auto it = servers_.find(sid); it != servers_.end()) {
         it->second.fn(call);
       } else if (stats_.placeholder_calls[sid]++ < 3) {

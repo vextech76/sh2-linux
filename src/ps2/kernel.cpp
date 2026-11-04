@@ -378,8 +378,8 @@ void Kernel::syscall(ee::Cpu& c, ee::Memory&, uint32_t pc) {
   c.pc = pc;
   ++stats_.syscalls[num];
   if (trace_)
-    log::debug(kSub, "{} a0=0x{:x} a1=0x{:x} a2=0x{:x} @0x{:08x} thread {}", syscall_label(num), uarg(0), uarg(1),
-               uarg(2), pc, current_ ? current_->id : 0);
+    log::debug(kSub, "{} a0=0x{:x} a1=0x{:x} a2=0x{:x} @0x{:08x} ra=0x{:08x} thread {}", syscall_label(num), uarg(0),
+               uarg(1), uarg(2), pc, c.gpr[31].u32[0], current_ ? current_->id : 0);
   if (auto it = custom_syscalls_.find(num); it != custom_syscalls_.end()) {
     // Handler installed by the game with SetSyscall: run it like a call, preserving the caller.
     Regs saved;
@@ -789,6 +789,16 @@ void Kernel::dispatch(int num) {
       throw ee::GuestTrap(stats_.last_syscall_pc,
                           std::format("unimplemented syscall {} (v1={})", syscall_label(n), num));
   }
+}
+
+std::vector<Kernel::ThreadContext> Kernel::thread_contexts() const {
+  std::vector<ThreadContext> out;
+  for (const auto& [id, t] : threads_) {
+    const bool running = t.get() == current_;
+    const auto& g = running ? c_.gpr : t->regs.gpr;
+    out.push_back({id, running, g[29].u32[0], g[31].u32[0]});
+  }
+  return out;
 }
 
 std::string Kernel::describe_threads() const {

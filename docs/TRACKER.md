@@ -14,7 +14,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-7 | Ingest: read-only ISO9660 reader + disc ID + extraction | done | | SLUS-20228 identified; boot set extracted to XDG data |
 | LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | done | | See docs/ANALYSIS.md; overlays confirmed |
 | LAN-9 | Recompiler: R5900 → C++ | done | | 514,628 insns; 14 runtime-trap sites; differential tests |
-| LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | in_progress | | kernel + SIF done; boot reaches LOADFILE/CDVD |
+| LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
 | LAN-11 | VU1 + GS → Vulkan | todo | | |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-13 | Choose a license | blocked | | Owner decision |
@@ -24,6 +24,8 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-18: IOP HLE servers: CDVDFSV (0x80000592/593/595/596/597/59A: init, S/N commands,
-  sector reads from the read-only ISO, search file, disk ready/sync), LOADFILE (0x80000006:
-  module load acknowledgements per loaded IRX), then padman, mcserv, and sound placeholder.
+- LAN-11 (Stage 8): DMA controller (VIF1/GIF/SPR channels, chain mode) -> VIF1 unpack ->
+  VU1 micro-mode interpreter -> GIF packets -> GS state machine + local memory -> Vulkan
+  presentation of the display buffer. Start with SPR DMA (memory-to-memory) and GIF PATH3
+  image transfers so the first frame buffer can be shown.
+- LAN-19: padman (0x80000100/101) wired to InputSystem; mcserv (0x80000400) on XDG memcards.

@@ -244,9 +244,17 @@ ee/semantics.h  ◀── single source of truth ──▶ ee/interpreter (refer
   into the game's receive buffer so its own libsif handler processes them. RPC servers are
   pluggable; unknown servers answer with zeros and are reported as PLACEHOLDER.
 
-**Boot status (SLUS-20228):** crt0 → threads/semaphores/handlers → SIF init → CDVD servers
-(0x80000592/593/596/59A) → IOP reset with IOPRP → re-init → LOADFILE (0x80000006); then waits
-for real IOP services (module load results, CD reads).
+**IOP services (`src/iop/services.*`)**, protocols per ps2sdk's EE clients and verified on the
+wire: CDVDFSV init / S-commands / N-commands (sector reads + streaming from the read-only ISO) /
+search-file (both the ps2sdk 292-byte and SCE 296-byte packet layouts) / disk-ready / power-off;
+LOADFILE (module loads acknowledged and recorded; `GET_VERSION` reports "2240", the release
+SLUS-20228's SCE client checks for); IOP heap (bump allocator over modelled IOP RAM).
+
+**Boot status (SLUS-20228):** crt0 → kernel services → SIF → CDVD → IOP reset (IOPRP) →
+9 IOP modules loaded → all `DATA/*.MGF` archives located → main loop: per-frame VIF1 DMA
+(~3/frame), scratchpad DMA, GS privileged-register writes, `SetGsCrt` interlaced NTSC; pad
+(0x80000100/101), memory card (0x80000400), SDR sound (0x80000701) and the Konami sound driver
+(0x15) are bound and answered as PLACEHOLDER. **Next boundary: GIF/VIF/VU1/GS (Stage 8).**
 
 ## 9. Known limitations / risks
 

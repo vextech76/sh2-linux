@@ -34,7 +34,8 @@ target_compile_definitions(lantern-recomp PRIVATE LANTERN_SOURCE_DIR="${PROJECT_
 target_link_libraries(lantern-recomp PRIVATE lantern_recomp lantern_iso lantern_warnings)
 
 # --- ps2: HLE kernel, EE hardware registers, boot ---
-add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp iop/sif_hle.cpp)
+add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp iop/sif_hle.cpp iop/services.cpp)
+target_link_libraries(lantern_ps2 PUBLIC lantern_iso)
 target_link_libraries(lantern_ps2 PUBLIC lantern_recomp_runtime lantern_analysis PRIVATE lantern_warnings)
 add_executable(lantern-boot ps2/boot_main.cpp)
 set_target_properties(lantern-boot PROPERTIES ENABLE_EXPORTS ON)  # the dlopen'ed game library links against the runtime

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -20,6 +21,7 @@
 #include "core/paths.h"
 #include "ee/elf.h"
 #include "ee/r5900.h"
+#include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
 #include "ps2/boot.h"
@@ -41,11 +43,15 @@ std::string manifest_value(const fs::path& manifest, const std::string& key) {
   return "";
 }
 
+iop::CdvdService* g_cdvd = nullptr;
+iop::LoadfileService* g_loadfile = nullptr;
+
 struct Report {
   ps2::Kernel* kernel = nullptr;
   ps2::Hardware* hw = nullptr;
   recomp::Runtime* rt = nullptr;
   iop::SifHle* sif = nullptr;
+  ee::Memory* mem = nullptr;
   std::string outcome;
 
   std::string render() const {
@@ -61,6 +67,25 @@ struct Report {
         r += std::format("  {:<24} x{}\n", name.empty() ? std::format("#{}", n) : std::string(name), count);
       }
       r += "threads:\n" + kernel->describe_threads();
+      // Heuristic guest backtraces: stack words that point just after a JAL in the main image.
+      for (const auto& t : kernel->thread_contexts()) {
+        r += std::format("  thread {} sp=0x{:08x} ra=0x{:08x} stack return addresses:", t.id, t.sp, t.ra);
+        int found = 0;
+        for (uint32_t a = t.sp; a < t.sp + 0x1000 && found < 10 && mem; a += 4) {
+          const uint8_t* p = mem->host(a, 4);
+          if (!p) break;
+          uint32_t v;
+          std::memcpy(&v, p, 4);
+          if (v < 0x00100008 || v >= 0x003E6880 || (v & 3)) continue;
+          const uint8_t* q = mem->host(v - 8, 4);
+          uint32_t w;
+          std::memcpy(&w, q, 4);
+          if ((w >> 26) != 3) continue;  // previous-but-one instruction must be JAL
+          r += std::format(" 0x{:08x}", v);
+          ++found;
+        }
+        r += "\n";
+      }
     }
     if (rt)
       r += std::format("calls: native {}  interpreted {} ({} interpreted instructions)\n", rt->stats().native_calls,
@@ -85,6 +110,17 @@ struct Report {
       for (const auto& [sid, n] : st.binds) r += std::format("  {} (bind x{})\n", sif->server_name(sid), n);
       r += "RPC calls (server, function):\n";
       for (const auto& [k, n] : st.calls) r += std::format("  {} fn {} x{}\n", sif->server_name(k.first), k.second, n);
+    }
+    if (g_loadfile) {
+      r += std::format("IOP modules requested ({}):\n", g_loadfile->modules().size());
+      for (const auto& mname : g_loadfile->modules()) r += "  " + mname + "\n";
+    }
+    if (g_cdvd) {
+      const auto& c = g_cdvd->stats();
+      r += std::format("CD/DVD: {} reads, {} stream reads, {} sectors ({:.1f} MB); {} searches ({} misses)\n", c.reads,
+                       c.stream_reads, c.sectors_read, static_cast<double>(c.sectors_read) * 2048.0 / 1048576.0,
+                       c.searches, c.search_misses);
+      for (const auto& f : c.searched) r += "  searched " + f + "\n";
     }
     return r;
   }
@@ -163,6 +199,19 @@ int main(int argc, char** argv) {
   ps2::Kernel kernel(*cpu, *mem, rt, hw);
   kernel.set_trace(trace);
   iop::SifHle sif(*mem);
+  auto disc = iso::Image::open(iso_path, &err);
+  if (!disc) {
+    std::fprintf(stderr, "lantern-boot: %s\n", err.c_str());
+    return 1;
+  }
+  iop::CdvdService cdvd(*mem, *disc);
+  cdvd.register_with(sif);
+  iop::IopHeapService iop_heap;
+  iop_heap.register_with(sif);
+  iop::LoadfileService loadfile;
+  loadfile.register_with(sif);
+  g_cdvd = &cdvd;
+  g_loadfile = &loadfile;
   sif.set_reset_hook([&] { hw.iop_reset(); });
   kernel.set_sif(&sif);
 
@@ -171,7 +220,7 @@ int main(int argc, char** argv) {
   uint32_t ov_base = 0;
   for (const auto& s : elf->segments())
     if (s.type == 1 && s.filesz == 0 && (ov_base == 0 || s.vaddr < ov_base)) ov_base = s.vaddr;
-  if (auto iso = iso::Image::open(iso_path, &err)) {
+  if (auto* iso = &*disc) {
     std::vector<std::pair<std::string, iso::Entry>> files;
     iso->walk([&](const std::string& p, const iso::Entry& e) {
       if (!e.is_dir && (p.starts_with("/GX/") || p.starts_with("/GY/") || p.starts_with("/GZ/")) && p.ends_with(".BIN"))
@@ -193,7 +242,7 @@ int main(int argc, char** argv) {
 
   {
     std::lock_guard lock(g_report_mutex);
-    g_report = {&kernel, &hw, &rt, &sif, ""};
+    g_report = {&kernel, &hw, &rt, &sif, mem.get(), ""};
   }
   std::atomic<bool> done{false};
   std::thread watchdog([&] {
