@@ -18,6 +18,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-19 | padman HLE -> InputSystem | done | | |
+| LAN-21 | Local-memory layout derived from documented structure; PSMT8 order measured | done | | |
 | LAN-20 | GS display in the Vulkan window | done | | |
 | LAN-13 | Choose a license | blocked | | Owner decision |
 | LAN-14 | Remove wrongly installed `volk-devel` (GNU Radio) | todo | | Owner action: `sudo dnf remove volk-devel` |
@@ -26,8 +27,9 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-21: exact PSMT8/PSMT4 in-block column tables (title-screen textures are scrambled), with
-  cross-format aliasing tests.
+- LAN-24: verify the T4 in-block order on a screen that exercises 4-bit textures
+  (`--swizzle-variant 0,N`), then promote it from "derived" to "measured" in DESIGN.md. T8 was
+  measured on the title screen (logo legible; alternatives produce noise).
 - LAN-22: mcserv HLE (0x80000400) backed by $XDG_DATA_HOME/lantern/memcards.
 - LAN-23: run the game from the main `lantern` executable (session refactor of lantern-boot).
 - LAN-11 cont.: VU1 micro-mode interpreter (+ XGKICK PATH1) when the game first uploads microcode.

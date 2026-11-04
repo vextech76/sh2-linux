@@ -83,7 +83,8 @@ Prints a boot report: outcome, syscalls, threads, RPC servers used, unmodelled h
 
 Add `--window` to play in a window (keyboard/controller per `~/.config/lantern/config.toml`,
 default: arrows = d-pad, Space = Cross, Escape/Return = Start, F11 fullscreen) and `--seconds 0` to run without the watchdog time limit. `--dump-frames DIR` writes PNGs; `--press 600:cross`
-scripts input.
+scripts input; `--swizzle-variant 0,1` selects the indexed-format in-block orders (see
+`src/gs/gs_memory.cpp` and DESIGN.md §8.3).
 
 Optional decoder oracle: `sudo dnf install binutils-mips64-linux-gnu` enables the `oracle` CTest label.
 
