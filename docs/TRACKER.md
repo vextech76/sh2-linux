@@ -15,7 +15,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | done | | See docs/ANALYSIS.md; overlays confirmed |
 | LAN-9 | Recompiler: R5900 → C++ | done | | 514,628 insns; 14 runtime-trap sites; differential tests |
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
-| LAN-11 | VU1 + GS → Vulkan | todo | | |
+| LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-13 | Choose a license | blocked | | Owner decision |
 | LAN-14 | Remove wrongly installed `volk-devel` (GNU Radio) | todo | | Owner action: `sudo dnf remove volk-devel` |
@@ -24,8 +24,8 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-17 | SPU2 register-level emulation | todo | | |
 
 ## [NEXT]
-- LAN-11 (Stage 8): DMA controller (VIF1/GIF/SPR channels, chain mode) -> VIF1 unpack ->
-  VU1 micro-mode interpreter -> GIF packets -> GS state machine + local memory -> Vulkan
-  presentation of the display buffer. Start with SPR DMA (memory-to-memory) and GIF PATH3
-  image transfers so the first frame buffer can be shown.
+- LAN-20: present the GS display through the Vulkan renderer in a window (`Renderer::present_image`),
+  then LAN-19 (padman -> InputSystem) so the player can answer the memory-card prompt, and an
+  mcserv HLE backed by $XDG_DATA_HOME/lantern/memcards so the prompt goes away.
+- LAN-11 cont.: VU1 micro-mode interpreter (+ XGKICK PATH1) when the game first uploads microcode.
 - LAN-19: padman (0x80000100/101) wired to InputSystem; mcserv (0x80000400) on XDG memcards.

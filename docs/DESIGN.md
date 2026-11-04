@@ -256,6 +256,42 @@ SLUS-20228's SCE client checks for); IOP heap (bump allocator over modelled IOP 
 (0x80000100/101), memory card (0x80000400), SDR sound (0x80000701) and the Konami sound driver
 (0x15) are bound and answered as PLACEHOLDER. **Next boundary: GIF/VIF/VU1/GS (Stage 8).**
 
+### 8.3 Graphics path (Stage 8a/8b) 🟡
+
+```
+EE ──DMA ch1──▶ VIF1 ──DIRECT──▶ GIF PATH2 ─┐
+   ──DMA ch2──────────────────▶ GIF PATH3 ─┼─▶ GS registers ─▶ software rasterizer ─▶ local memory (4 MB)
+   ──DMA ch8/9 (scratchpad copies)          │                                              │
+                     VIF1 UNPACK/MPG ─▶ VU1 memory (interpreter: Stage 8c)                   ▼
+                                                                    display readout (PMODE/DISPFBn/DISPLAYn)
+```
+
+- **DMAC** (`src/ps2/vif.*`): normal and source-chain modes (refe/cnt/next/ref/refs/call/ret/end,
+  2-level call stack, TTE tag words to VIF, IRQ-tag stop), scratchpad transfers; executed
+  synchronously on `CHCR.STR`.
+- **VIF1**: all codes decoded; DIRECT/DIRECTHL → GIF PATH2; UNPACK (all vn/vl incl. V4-5, CL/WL
+  skipping/filling, offset/difference modes, masks, TOPS double buffering) and MPG into VU1
+  memory. MSCAL/MSCNT are counted until the VU1 interpreter exists.
+- **GIF** (`src/gs/gs.*`): PACKED (all descriptors incl. ADC), REGLIST, IMAGE; packets span DMAs.
+- **GS**: general registers, host→local and local→local transfers, CLUT loading (CLD modes,
+  CSM1, CSA), FINISH/SIGNAL → CSR + INTC 0, privileged registers, display composition including
+  interlaced frame mode.
+- **Local memory**: CT32/24/16/16S and Z formats use the GS manual's block/column tables
+  (bijectivity and known-address tests). **Approximation:** 8/4-bit formats use the correct
+  page/block geometry with provisional in-block pixel order — exact when a texture is uploaded
+  and sampled in the same format (what SLUS-20228 does so far); aliasing tricks would break.
+- **Software rasterizer** (`src/gs/rasterizer.*`): points, lines, triangles/strips/fans
+  (top-left fill rule), sprites; flat/Gouraud; STQ/UV texturing with nearest or bilinear
+  (TEX1.MMAG) sampling, four wrap modes, CT/indexed+CLUT formats, TEXA; MODULATE/DECAL/
+  HIGHLIGHT(2); fog; alpha test with AFAIL modes; depth test; blending incl. PABE, COLCLAMP, FBA;
+  FBMSK. Not yet: mipmapping/minification filters, DATE, dithering, scan-mask, anti-aliasing.
+- **First output (2026-11-03):** `lantern-boot --dump-frames DIR` writes PNGs of the displayed
+  buffer. SLUS-20228 renders its memory-card warning screen correctly (it reports no card,
+  because the memory-card server is still a placeholder). Frames are game output and are never
+  committed.
+- Observed: at this point the game draws exclusively via VIF1 DIRECT (PATH2) and GIF PATH3; no
+  VU1 microcode has been uploaded yet.
+
 ## 9. Known limitations / risks
 
 - **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,

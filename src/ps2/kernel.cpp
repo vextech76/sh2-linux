@@ -276,6 +276,7 @@ void Kernel::call_handler(uint32_t func, uint32_t a0, uint32_t a1, uint32_t a2) 
 void Kernel::fire_vblank() {
   ++stats_.vblanks;
   hw_.on_vblank();
+  if (vblank_hook_) vblank_hook_(stats_.vblanks);
   if (vsync_flag_addr_) {
     m_.write<uint32_t>(vsync_flag_addr_, 1);
     if (vsync_csr_addr_) m_.write<uint64_t>(vsync_csr_addr_, (stats_.vblanks & 1) ? 1u << 13 : 0);
@@ -306,6 +307,15 @@ void Kernel::deliver_due(double now) {
     it = alarms_.erase(it);
     ++stats_.alarms_fired;
     call_handler(a.handler, static_cast<uint32_t>(id), static_cast<uint16_t>(now * kHsyncHz), a.arg);
+  }
+  // GS FINISH/SIGNAL interrupts (INTC cause 0).
+  if (hw_.take_gs_interrupt() && (hw_.intc_mask() & 1u)) {
+    hw_.raise_intc(Hardware::kIntcGs);
+    if (auto it = intc_handlers_.find(Hardware::kIntcGs); it != intc_handlers_.end()) {
+      const auto handlers = it->second;
+      for (const auto& h : handlers)
+        if (h.enabled) call_handler(h.func, 0, h.arg, 0);
+    }
   }
   // IOP -> EE packets: one per SIF0 (DMA channel 5) completion interrupt.
   while (sif_ && sif_->deliver_one()) {
@@ -467,6 +477,7 @@ void Kernel::dispatch(int num) {
     case 0x71: {                     // GsPutIMR
       const uint32_t old = gs_imr_;
       gs_imr_ = uarg(0);
+      hw_.set_gs_imr(gs_imr_);
       return ret(old);
     }
     case 0x73:  // SetVSyncFlag(flag*, csr*)

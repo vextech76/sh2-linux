@@ -4,6 +4,7 @@
 #include <format>
 
 #include "core/log.h"
+#include "gs/gs.h"
 
 namespace lantern::ps2 {
 namespace {
@@ -81,11 +82,14 @@ uint32_t Hardware::read32(uint32_t a) {
     case kIStat: return intc_stat_;
     case kIMask: return intc_mask_;
     case kDStat: return dmac_stat_;
-    case kGsCsr: return (vblanks_ & 1 ? 1u << 13 : 0) | (0x1Bu << 16) | (0x55u << 24);  // FIELD, REV, ID
+    case kGsCsr:
+      if (gs_) return gs_->read_priv32(0x1000);
+      return (vblanks_ & 1 ? 1u << 13 : 0) | (0x1Bu << 16) | (0x55u << 24);  // FIELD, REV, ID
     default: break;
   }
   for (int c = 0; c < kDmaChannels; ++c)
     if (a == kDmaBase[c]) return regs_[a] & ~0x100u;  // CHCR: STR always clear (transfers are instant)
+  if (gs_ && a >= 0x12000000 && a < 0x12002000) return gs_->read_priv32(a - 0x12000000);
   if (a >= 0x1000F200 && a < 0x1000F240) return sif_reg((a - 0x1000F200) / 0x10 + 1);  // MSCOM..SMFLG = 1..4
   auto& acc = unmodelled_[a];
   ++acc.reads;
@@ -121,12 +125,17 @@ void Hardware::write32(uint32_t a, uint32_t v) {
     if (a != kDmaBase[c]) continue;
     regs_[a] = v;
     if (v & 0x100) {  // STR: transfer start
-      if (dma_starts_[c]++ == 0)
+      const bool done = dma_hook_ && dma_hook_(c);
+      if (dma_starts_[c]++ == 0 && !done)
         log::warn("hw", "PLACEHOLDER: DMA channel {} ({}) started - {} is not emulated yet; transfer discarded", c,
                   kDmaName[c], kDmaName[c]);
       dmac_stat_ |= 1u << c;
       completed_dma_ |= 1u << c;
     }
+    return;
+  }
+  if (gs_ && a >= 0x12000000 && a < 0x12002000) {
+    gs_->write_priv32(a - 0x12000000, v);
     return;
   }
   if (a >= 0x1000F200 && a < 0x1000F240) {
@@ -170,4 +179,11 @@ void Hardware::write(uint32_t addr, const void* in, unsigned size) {
   }
 }
 
+}  // namespace lantern::ps2
+
+namespace lantern::ps2 {
+bool Hardware::take_gs_interrupt() { return gs_ && gs_->take_interrupt(); }
+void Hardware::set_gs_imr(uint32_t imr) {
+  if (gs_) gs_->set_imr(imr);
+}
 }  // namespace lantern::ps2

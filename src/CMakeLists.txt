@@ -1,5 +1,5 @@
 # --- core: logging and paths (no third-party deps) ---
-add_library(lantern_core STATIC core/log.cpp core/paths.cpp core/sha256.cpp)
+add_library(lantern_core STATIC core/log.cpp core/paths.cpp core/sha256.cpp core/png.cpp)
 target_include_directories(lantern_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lantern_core PRIVATE lantern_warnings)
 
@@ -34,8 +34,10 @@ target_compile_definitions(lantern-recomp PRIVATE LANTERN_SOURCE_DIR="${PROJECT_
 target_link_libraries(lantern-recomp PRIVATE lantern_recomp lantern_iso lantern_warnings)
 
 # --- ps2: HLE kernel, EE hardware registers, boot ---
-add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp iop/sif_hle.cpp iop/services.cpp)
-target_link_libraries(lantern_ps2 PUBLIC lantern_iso)
+add_library(lantern_gs STATIC gs/gs_memory.cpp gs/gs.cpp gs/rasterizer.cpp)
+target_link_libraries(lantern_gs PUBLIC lantern_core PRIVATE lantern_warnings)
+add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp ps2/vif.cpp iop/sif_hle.cpp iop/services.cpp)
+target_link_libraries(lantern_ps2 PUBLIC lantern_iso lantern_gs)
 target_link_libraries(lantern_ps2 PUBLIC lantern_recomp_runtime lantern_analysis PRIVATE lantern_warnings)
 add_executable(lantern-boot ps2/boot_main.cpp)
 set_target_properties(lantern-boot PROPERTIES ENABLE_EXPORTS ON)  # the dlopen'ed game library links against the runtime

@@ -46,6 +46,7 @@ class Kernel final : public ee::Hooks {
   // Called after FlushCache(instruction cache) so the runtime can detect overlay loads.
   void set_code_modified_hook(std::function<void()> fn) { code_modified_ = std::move(fn); }
   void set_trace(bool on) { trace_ = on; }
+  void set_vblank_hook(std::function<void(uint64_t)> fn) { vblank_hook_ = std::move(fn); }
 
   // Run the program from `entry` as thread 1 until it exits or traps. Rethrows GuestTrap.
   int run(uint32_t entry, uint32_t initial_sp);
@@ -144,6 +145,7 @@ class Kernel final : public ee::Hooks {
   SifEndpoint* sif_ = nullptr;
   Clock clock_;
   std::function<void()> code_modified_;
+  std::function<void(uint64_t)> vblank_hook_;
   bool trace_ = false;
 
   std::map<int, std::unique_ptr<Thread>> threads_;

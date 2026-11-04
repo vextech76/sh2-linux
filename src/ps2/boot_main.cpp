@@ -19,14 +19,18 @@
 #include "analysis/ps2_syscalls.h"
 #include "core/log.h"
 #include "core/paths.h"
+#include "core/png.h"
 #include "ee/elf.h"
 #include "ee/r5900.h"
+#include "gs/gs.h"
+#include "gs/rasterizer.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
 #include "ps2/boot.h"
 #include "ps2/hardware.h"
 #include "ps2/kernel.h"
+#include "ps2/vif.h"
 
 namespace fs = std::filesystem;
 using namespace lantern;
@@ -44,6 +48,9 @@ std::string manifest_value(const fs::path& manifest, const std::string& key) {
 }
 
 iop::CdvdService* g_cdvd = nullptr;
+gs::Gs* g_gs = nullptr;
+gs::Rasterizer* g_raster = nullptr;
+ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
 
 struct Report {
@@ -111,6 +118,31 @@ struct Report {
       r += "RPC calls (server, function):\n";
       for (const auto& [k, n] : st.calls) r += std::format("  {} fn {} x{}\n", sif->server_name(k.first), k.second, n);
     }
+    if (g_gs) {
+      const auto& g = g_gs->stats();
+      r += std::format(
+          "GS: {} image transfers ({} pixels), {} local copies, {} primitives, FINISH "
+          "x{}\n",
+          g.image_transfers, g.image_pixels, g.local_copies, g.primitives, g.finish);
+      if (g_raster) {
+        const auto& rs = g_raster->stats();
+        r += std::format("  rasterized: {} triangles, {} sprites, {} lines, {} points; {} pixels written ({} tested)\n",
+                         rs.triangles, rs.sprites, rs.lines, rs.points, rs.pixels_written, rs.pixels_tested);
+      }
+      for (const auto& [t, n] : g.kicks) r += std::format("  prim type {} vertex kicks x{}\n", t, n);
+      for (const auto& [p, n] : g.unsupported_psm) r += std::format("  unsupported PSM 0x{:02x} x{}\n", p, n);
+      r += std::format("  PMODE 0x{:x} DISPFB2 0x{:x} DISPLAY2 0x{:x} SMODE2 0x{:x}\n", g_gs->priv(0), g_gs->priv(0x90),
+                       g_gs->priv(0xA0), g_gs->priv(0x20));
+    }
+    if (g_vif1) {
+      const auto& v = g_vif1->stats();
+      r += std::format(
+          "VIF1: {} unpacked qwords, {} DIRECT qwords, {} MPG pairs, {} VU1 starts (PLACEHOLDER: VU1 not executed)\n  "
+          "codes:",
+          v.unpacked_qwords, v.direct_qwords, v.mpg_pairs, v.vu1_starts);
+      for (const auto& [c, n] : v.commands) r += std::format(" {:02x}:{}", c, n);
+      r += "\n";
+    }
     if (g_loadfile) {
       r += std::format("IOP modules requested ({}):\n", g_loadfile->modules().size());
       for (const auto& mname : g_loadfile->modules()) r += "  " + mname + "\n";
@@ -133,6 +165,8 @@ int main(int argc, char** argv) {
   fs::path extracted, iso_path, game_lib;
   double seconds = 20;
   bool trace = false;
+  fs::path dump_dir;
+  uint64_t dump_every = 60;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--extracted" && i + 1 < argc)
@@ -145,8 +179,15 @@ int main(int argc, char** argv) {
       seconds = std::stod(argv[++i]);
     else if (a == "--trace")
       trace = true;
+    else if (a == "--dump-frames" && i + 1 < argc)
+      dump_dir = argv[++i];
+    else if (a == "--dump-every" && i + 1 < argc)
+      dump_every = std::stoull(argv[++i]);
     else {
-      std::fputs("usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace]\n", stderr);
+      std::fputs(
+          "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--dump-frames DIR "
+          "[--dump-every N]]\n",
+          stderr);
       return 2;
     }
   }
@@ -194,10 +235,35 @@ int main(int argc, char** argv) {
       });
   ps2::load_elf(*mem, *elf);
 
+  // Graphics: GS + GIF paths, VIF1 + VU1 memory, DMA controller.
+  auto gs = std::make_unique<gs::Gs>();
+  gs::Gif gif_path2(*gs), gif_path3(*gs);
+  auto vu1 = std::make_unique<ps2::Vu1Memory>();
+  ps2::Vif1 vif1(*vu1, gif_path2);
+  hw.set_gs(gs.get());
+  gs::Rasterizer raster;
+  gs->set_rasterizer([&](gs::Gs& g, const gs::Vertex* v, int n, uint64_t prim) { raster.draw(g, v, n, prim); });
+  g_raster = &raster;
+  ps2::Dmac dmac(hw, [&](uint32_t addr, uint32_t size) { return mem->host(addr, size); });
+  dmac.set_sink(1, [&](const uint8_t* q, uint32_t n) { vif1.feed(reinterpret_cast<const uint32_t*>(q), n * 4); });
+  dmac.set_tag_sink(1, [&](const uint32_t* w, size_t n) { vif1.feed(w, n); });
+  dmac.set_sink(2, [&](const uint8_t* q, uint32_t n) { gif_path3.process(q, n); });
+  hw.set_dma_hook([&](int ch) { return dmac.run(ch); });
+  g_gs = gs.get();
+  g_vif1 = &vif1;
+
   recomp::Runtime rt;
   reg(rt);
   ps2::Kernel kernel(*cpu, *mem, rt, hw);
   kernel.set_trace(trace);
+  if (!dump_dir.empty()) fs::create_directories(dump_dir);
+  kernel.set_vblank_hook([&](uint64_t n) {
+    gs->on_vblank();
+    if (dump_dir.empty() || n % dump_every) return;
+    auto img = gs->display();
+    if (img.width == 0) return;
+    write_png(dump_dir / std::format("frame_{:06}.png", n), img.width, img.height, img.rgba);
+  });
   iop::SifHle sif(*mem);
   auto disc = iso::Image::open(iso_path, &err);
   if (!disc) {
