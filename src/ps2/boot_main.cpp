@@ -379,6 +379,7 @@ int main(int argc, char** argv) {
   }
   std::atomic<bool> done{false};
   std::thread watchdog([&] {
+    if (seconds <= 0) return;  // --seconds 0: run until the window is closed or the game exits
     for (double t = 0; t < seconds && !done; t += 0.1) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     if (done) return;
     // The guest is still running (or spinning without safe points): report and stop the process.
