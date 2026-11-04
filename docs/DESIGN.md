@@ -325,6 +325,24 @@ EE ──DMA ch1──▶ VIF1 ──DIRECT──▶ GIF PATH2 ─┐
 game aliases texture formats there, which the provisional 8/4-bit in-block order (§8.3) cannot
 reproduce. Exact PSMT8/PSMT4 column tables are the next fix.
 
+### 8.5 Memory card (LAN-22) 🟡
+
+- `MemoryCard` (`src/iop/memcard.*`): 8 MB card backed by `$XDG_DATA_HOME/lantern/memcards/card1.ps2`
+  (512-byte pages, 1 KB clusters), with a real superblock, FAT and root directory: `format()`
+  writes a valid card, `free_clusters()` walks the FAT, entries are read from the on-card
+  directory. Unit-tested (format, free space, save/load round trip). The card is created and
+  formatted on first run, i.e. the state of a freshly inserted card.
+- `McService` (RPC 0x80000400) implements the classic command numbering (0x70..0x80) with INIT,
+  OPEN/CLOSE/SEEK/READ/WRITE/GETDIR/FORMAT plumbing and a probe reply; unmodelled commands are
+  answered with zeros and logged once each.
+- **Open:** SLUS-20228's "MEMORY CARD(PS2) not inserted" screen persists. The game issues exactly
+  one mcman call (function 0xFE, 48 bytes in, 12 bytes out) and its result does not change the
+  message in any of the four plausible 12-byte layouts tried (`--mc-probe A|B|C|D`), so either the
+  reply semantics differ from the assumption, or the presence check depends on state created by a
+  command that is never reached. Next step is to capture the full command sequence with a card
+  that already contains a save file, and to check whether an `mcserv`-side (`0x80000401`) or
+  thread/handshake reply is also required.
+
 ## 9. Known limitations / risks
 
 - **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,

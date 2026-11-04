@@ -26,6 +26,7 @@
 #include "gs/gs.h"
 #include "gs/rasterizer.h"
 #include "input/input_system.h"
+#include "iop/memcard.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
@@ -53,6 +54,7 @@ std::string manifest_value(const fs::path& manifest, const std::string& key) {
 
 iop::CdvdService* g_cdvd = nullptr;
 gs::Gs* g_gs = nullptr;
+iop::McService* g_mc = nullptr;
 gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
@@ -98,6 +100,8 @@ struct Report {
         r += "\n";
       }
     }
+    if (rt)
+      r += std::format("guest continuations (non-standard returns followed): {}\n", rt->stats().nonstandard_returns);
     if (rt)
       r += std::format("calls: native {}  interpreted {} ({} interpreted instructions)\n", rt->stats().native_calls,
                        rt->stats().interpreted_calls, rt->stats().interpreted_steps);
@@ -152,6 +156,14 @@ struct Report {
       for (const auto& [c, n] : v.commands) r += std::format(" {:02x}:{}", c, n);
       r += "\n";
     }
+    if (g_mc) {
+      const auto& mcst = g_mc->stats();
+      r += "memory card: commands";
+      for (const auto& [fn, n] : mcst.commands) r += std::format(" 0x{:02x}:{}", fn, n);
+      r += std::format("; opens {} reads {} writes {} getdirs {} formats {}\n", mcst.opens, mcst.reads, mcst.writes,
+                       mcst.getdirs, mcst.formats);
+      for (const auto& nm : mcst.opened) r += "  opened " + nm + "\n";
+    }
     if (g_loadfile) {
       r += std::format("IOP modules requested ({}):\n", g_loadfile->modules().size());
       for (const auto& mname : g_loadfile->modules()) r += "  " + mname + "\n";
@@ -175,9 +187,12 @@ int main(int argc, char** argv) {
   double seconds = 20;
   bool trace = false;
   bool window = false;
+  bool turbo = false;
+  char mc_probe = 'A';
+  uint64_t stop_frame = 0;             // stop after this many guest frames (0 = no limit)
   int swizzle_t8 = 0, swizzle_t4 = 0;  // indexed in-block orders under test (see gs/gs_memory.cpp)
   std::vector<std::pair<uint64_t, input::PadButton>> presses;  // scripted input: (vblank, button)
-  fs::path dump_dir;
+  fs::path dump_dir, texture_dir;
   uint64_t dump_every = 60;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -198,6 +213,12 @@ int main(int argc, char** argv) {
       if (comma != std::string::npos) swizzle_t4 = std::stoi(spec.substr(comma + 1));
     } else if (a == "--window")
       window = true;
+    else if (a == "--mc-probe" && i + 1 < argc)
+      mc_probe = argv[++i][0];
+    else if (a == "--frames" && i + 1 < argc)
+      stop_frame = std::stoull(argv[++i]);
+    else if (a == "--turbo")
+      turbo = true;                             // one game frame per VBlank, unpaced (automated checks only)
     else if (a == "--press" && i + 1 < argc) {  // FRAME:button, e.g. 600:dpad_left (held 8 frames)
       std::string spec = argv[++i];
       auto colon = spec.find(':');
@@ -209,13 +230,15 @@ int main(int argc, char** argv) {
       presses.emplace_back(std::stoull(spec.substr(0, colon)), *b);
     } else if (a == "--dump-frames" && i + 1 < argc)
       dump_dir = argv[++i];
+    else if (a == "--dump-textures" && i + 1 < argc)
+      texture_dir = argv[++i];
     else if (a == "--dump-every" && i + 1 < argc)
       dump_every = std::stoull(argv[++i]);
     else {
       std::fputs(
           "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--window] "
           "[--dump-frames DIR "
-          "[--dump-every N] [--swizzle-variant N]\n",
+          "[--dump-every N] [--dump-textures DIR] [--swizzle-variant N] [--turbo] [--frames N]\n",
           stderr);
       return 2;
     }
@@ -263,6 +286,13 @@ int main(int argc, char** argv) {
         hw.write(a, data, size);
       });
   ps2::load_elf(*mem, *elf);
+  iop::MemoryCard card;
+  const auto card_path = resolve_paths().memcard_dir() / "card1.ps2";
+  if (!card.load(card_path.string())) {
+    // No card yet: create and format one, the state a player has after inserting a new card.
+    card.format(card_path.string());
+    log::info("mc", "created and formatted a memory card at {}", card_path.string());
+  }
   iop::PadService pad(*mem);
 
   // Graphics: GS + GIF paths, VIF1 + VU1 memory, DMA controller.
@@ -287,6 +317,8 @@ int main(int argc, char** argv) {
   reg(rt);
   ps2::Kernel kernel(*cpu, *mem, rt, hw);
   kernel.set_trace(trace);
+  kernel.set_turbo(turbo);
+  hw.set_clock([&kernel] { return kernel.time(); });  // timers follow guest time (turbo or wall)
   // Optional window: SDL3 + Vulkan presentation of the GS display, input through InputSystem.
   Config cfg;
   if (auto cf = resolve_paths().config_file(); fs::exists(cf)) cfg = load_config(cf).config;
@@ -310,7 +342,9 @@ int main(int argc, char** argv) {
     }
   }
   if (!dump_dir.empty()) fs::create_directories(dump_dir);
+  if (!texture_dir.empty()) fs::create_directories(texture_dir);
   kernel.set_vblank_hook([&](uint64_t n) {
+    if (stop_frame && n >= stop_frame) throw ps2::GuestExit{0};
     gs->on_vblank();
     if (plat) {
       auto ev = plat->pump(input);
@@ -337,6 +371,17 @@ int main(int argc, char** argv) {
         renderer->end_frame();
       }
     }
+    if (!texture_dir.empty() && n == (stop_frame ? stop_frame - 1 : n) && g_raster) {
+      // Dump every texture the game actually sampled, decoded with the current layout.
+      int i = 0;
+      for (const auto& [d, count] : g_raster->stats().textures) {
+        if (d.psm != gs::kT4 && d.psm != gs::kT8 && d.psm != gs::kT4hl && d.psm != gs::kT8h) continue;
+        auto img = gs->sample_texture(d.tbp, d.tbw, d.psm, d.tw, d.th);
+        write_png(texture_dir / std::format("tex_{:02}_psm{:02x}_{}x{}_{}.png", i++, d.psm, d.tw, d.th, count),
+                  img.width, img.height, img.rgba);
+        if (i > 12) break;
+      }
+    }
     if (dump_dir.empty() || n % dump_every) return;
     auto img = gs->display();
     if (img.width == 0) return;
@@ -353,6 +398,10 @@ int main(int argc, char** argv) {
   iop::IopHeapService iop_heap;
   iop_heap.register_with(sif);
   pad.register_with(sif);
+  iop::McService mc(*mem, card);
+  mc.set_probe_layout(mc_probe);
+  mc.register_with(sif);
+  g_mc = &mc;
   iop::LoadfileService loadfile;
   loadfile.register_with(sif);
   g_cdvd = &cdvd;

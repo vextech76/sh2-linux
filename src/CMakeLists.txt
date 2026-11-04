@@ -36,7 +36,7 @@ target_link_libraries(lantern-recomp PRIVATE lantern_recomp lantern_iso lantern_
 # --- ps2: HLE kernel, EE hardware registers, boot ---
 add_library(lantern_gs STATIC gs/gs_memory.cpp gs/gs.cpp gs/rasterizer.cpp)
 target_link_libraries(lantern_gs PUBLIC lantern_core PRIVATE lantern_warnings)
-add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp ps2/vif.cpp iop/sif_hle.cpp iop/services.cpp)
+add_library(lantern_ps2 STATIC ps2/hardware.cpp ps2/kernel.cpp ps2/boot.cpp ps2/vif.cpp iop/sif_hle.cpp iop/services.cpp iop/memcard.cpp)
 target_link_libraries(lantern_ps2 PUBLIC lantern_iso lantern_gs)
 target_link_libraries(lantern_ps2 PUBLIC lantern_recomp_runtime lantern_analysis PRIVATE lantern_warnings)
 # --- input: device-agnostic mapping (no SDL) ---

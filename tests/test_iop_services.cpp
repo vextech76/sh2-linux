@@ -1,10 +1,12 @@
 #include <doctest/doctest.h>
 
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 
 #include "input/pad.h"
+#include "iop/memcard.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso_builder.h"
@@ -158,4 +160,41 @@ TEST_CASE("pad service: OPEN registers the pad area; update writes a DualShock 2
   CHECK(r.ee->read<uint8_t>(half + 112) == 6);                                  // PAD_STATE_STABLE
   pad.update(input::PadState{});
   CHECK(r.ee->read<uint32_t>(area + 88) == 2);  // alternates halves with a rising frame counter
+}
+
+TEST_CASE("memory card model: format, free clusters, save/load round trip") {
+  auto dir = std::filesystem::temp_directory_path() / "lantern_test_mc";
+  std::filesystem::remove_all(dir);
+  const auto path = dir / "card1.ps2";
+  iop::MemoryCard card;
+  CHECK_FALSE(card.formatted());
+  CHECK(card.free_clusters() == 0);
+  REQUIRE(card.format(path.string()));
+  CHECK(card.formatted());
+  CHECK(card.free_clusters() > 8000);  // ~8 MB card, most clusters free
+  CHECK(std::filesystem::file_size(path) == size_t{iop::MemoryCard::kPages} * iop::MemoryCard::kPageSize);
+  CHECK(card.root_entries().size() == 1);  // "." only
+  CHECK(card.root_entries()[0].is_dir);
+  iop::MemoryCard reloaded;
+  REQUIRE(reloaded.load(path.string()));
+  CHECK(reloaded.formatted());
+  CHECK(reloaded.free_clusters() == card.free_clusters());
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("mcman: info probe replies in the selected layout, unsupported commands are counted") {
+  Rig r;
+  iop::MemoryCard card;
+  card.format((std::filesystem::temp_directory_path() / "lantern_test_mc2.ps2").string());
+  iop::McService mc(*r.ee, card);
+  mc.set_probe_layout('B');
+  mc.register_with(r.sif);
+  auto srv = r.bind(0x80000400);
+  r.call(srv, 0xFE, std::vector<uint8_t>(48, 0), 12);
+  CHECK(r.ee->read<uint32_t>(kEeReply) == 2);        // type: PS2 card
+  CHECK(r.ee->read<uint32_t>(kEeReply + 4) > 8000);  // free clusters
+  CHECK(r.ee->read<uint32_t>(kEeReply + 8) == 0);    // formatted
+  r.call(srv, 0x7D, {}, 4);                          // unmodelled: zeros, counted
+  CHECK(mc.stats().commands.at(0x7D) == 1);
+  std::filesystem::remove(std::filesystem::temp_directory_path() / "lantern_test_mc2.ps2");
 }

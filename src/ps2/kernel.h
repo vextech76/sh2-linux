@@ -42,6 +42,11 @@ class Kernel final : public ee::Hooks {
   ~Kernel() override;
 
   void set_clock(Clock c);
+  // Turbo: do not pace vertical blanks to wall time (advance a virtual clock one frame each
+  // VBlank). Used for automated checks that need to reach a screen quickly; not for playing.
+  void set_turbo(bool on) { turbo_ = on; }
+  // Guest-visible time (virtual time in turbo mode). Hardware timers must use this clock too.
+  double time() const { return now(); }
   void set_sif(SifEndpoint* sif) { sif_ = sif; }
   // Called after FlushCache(instruction cache) so the runtime can detect overlay loads.
   void set_code_modified_hook(std::function<void()> fn) { code_modified_ = std::move(fn); }
@@ -166,6 +171,9 @@ class Kernel final : public ee::Hooks {
   uint32_t heap_end_ = 0;
   int ignored_patches_ = 0;
   double next_vblank_ = 0;
+  bool turbo_ = false;
+  double virtual_time_ = 0;
+  double now() const { return turbo_ ? virtual_time_ : clock_(); }
   bool in_interrupt_ = false;
   bool resched_pending_ = false;
 

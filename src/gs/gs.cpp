@@ -329,6 +329,32 @@ Image Gs::display() const {
   return img;
 }
 
+Image Gs::sample_texture(uint32_t tbp, uint32_t tbw, uint32_t psm, uint32_t tw, uint32_t th) const {
+  Image img;
+  img.width = std::clamp<uint32_t>(tw, 1, 1024);
+  img.height = std::clamp<uint32_t>(th, 1, 1024);
+  img.rgba.resize(size_t{img.width} * img.height);
+  for (uint32_t y = 0; y < img.height; ++y)
+    for (uint32_t x = 0; x < img.width; ++x) {
+      uint32_t c;
+      switch (psm) {
+        case kCt32:
+        case kCt24:
+        case kCt16:
+        case kCt16s: c = mem_.read_pixel(psm, tbp, tbw, x, y); break;
+        default: {
+          const uint32_t i = mem_.read_index(psm, tbp, tbw, x, y);
+          c = clut_is16_
+                  ? ((clut_[i & 255] & 0x1F) << 3) | ((clut_[i & 255] & 0x3E0) << 6) | ((clut_[i & 255] & 0x7C00) << 9)
+                  : clut_[i & 255];
+          break;
+        }
+      }
+      img.rgba[size_t{y} * img.width + x] = c | 0xFF000000u;
+    }
+  return img;
+}
+
 // ---- GIF ----------------------------------------------------------------------------------------
 void Gif::process(const uint8_t* q, uint32_t count) {
   for (uint32_t n = 0; n < count; ++n, q += 16) {

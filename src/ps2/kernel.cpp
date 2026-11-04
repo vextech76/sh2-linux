@@ -233,20 +233,26 @@ void Kernel::exit_current_thread(bool delete_after) {
 
 void Kernel::idle_until_event() {
   if (in_interrupt_) throw ee::GuestTrap(c_.pc, "all threads blocked inside an interrupt handler");
-  const double start = clock_();
+  double start = now();
+  int idle_rounds = 0;
   for (;;) {
     bool anything_can_happen =
         !intc_handlers_.empty() || !alarms_.empty() || !dmac_handlers_.empty() || vsync_flag_addr_ != 0;
-    if (!anything_can_happen || clock_() - start > kDeadlockSeconds) {
+    if (!anything_can_happen || (!turbo_ && now() - start > kDeadlockSeconds) || ++idle_rounds > 2000000) {
       throw ee::GuestTrap(stats_.last_syscall_pc,
                           std::format("deadlock: every guest thread is blocked ({}s idle)\n{}",
                                       anything_can_happen ? kDeadlockSeconds : 0.0, describe_threads()));
     }
     double due = next_vblank_;
     for (auto& [id, a] : alarms_) due = std::min(due, a.due);
-    const double now = clock_();
-    if (due > now) std::this_thread::sleep_for(std::chrono::duration<double>(std::min(due - now, 0.005)));
-    deliver_due(clock_());
+    const double cur = now();
+    if (due > cur) {
+      if (turbo_)
+        virtual_time_ = due;  // jump the virtual clock to the next event
+      else
+        std::this_thread::sleep_for(std::chrono::duration<double>(std::min(due - cur, 0.005)));
+    }
+    deliver_due(now());
     for (auto& [id, t] : threads_)
       if (t->state == State::Ready && !t->suspended) return;
   }
@@ -276,6 +282,7 @@ void Kernel::call_handler(uint32_t func, uint32_t a0, uint32_t a1, uint32_t a2) 
 void Kernel::fire_vblank() {
   ++stats_.vblanks;
   hw_.on_vblank();
+  if (turbo_) virtual_time_ += kVblankPeriod;
   if (vblank_hook_) vblank_hook_(stats_.vblanks);
   if (vsync_flag_addr_) {
     m_.write<uint32_t>(vsync_flag_addr_, 1);
@@ -293,7 +300,7 @@ void Kernel::fire_vblank() {
 
 void Kernel::deliver_due(double now) {
   if (in_interrupt_) return;
-  if (now - next_vblank_ > 0.25) next_vblank_ = now;  // don't replay a long stall frame by frame
+  if (!turbo_ && now - next_vblank_ > 0.25) next_vblank_ = now;  // don't replay a long stall frame by frame
   while (now >= next_vblank_) {
     next_vblank_ += kVblankPeriod;
     fire_vblank();
@@ -340,7 +347,7 @@ void Kernel::deliver_due(double now) {
 
 void Kernel::safe_point(bool allow_switch) {
   if (in_interrupt_ || !current_) return;
-  deliver_due(clock_());
+  deliver_due(now());
   if (allow_switch && resched_pending_) {
     resched_pending_ = false;
     schedule();
@@ -363,7 +370,7 @@ int Kernel::run(uint32_t entry, uint32_t initial_sp) {
   Thread* t = main.get();
   threads_[t->id] = std::move(main);
   ++stats_.threads_created;
-  next_vblank_ = clock_() + kVblankPeriod;
+  next_vblank_ = now() + kVblankPeriod;
   make_ready(t);
   current_ = nullptr;
   Thread* first = t;
@@ -756,7 +763,7 @@ void Kernel::dispatch(int num) {
     case 0x18:
     case 0xfc: {  // SetAlarm(time, handler, arg)
       const int id = next_alarm_id_++;
-      alarms_[id] = Alarm{clock_() + static_cast<double>(uarg(0) & 0xFFFF) / kHsyncHz, uarg(1), uarg(2),
+      alarms_[id] = Alarm{now() + static_cast<double>(uarg(0) & 0xFFFF) / kHsyncHz, uarg(1), uarg(2),
                           static_cast<uint16_t>(uarg(0))};
       return ret(id);
     }

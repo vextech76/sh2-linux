@@ -24,6 +24,7 @@ class Runtime {
     uint64_t native_calls = 0;
     uint64_t interpreted_calls = 0;
     uint64_t interpreted_steps = 0;
+    uint64_t nonstandard_returns = 0;  // guest continuations: the callee returned elsewhere
   };
 
   void add(uint32_t addr, GuestFn fn) { main_[addr] = fn; }
@@ -48,6 +49,8 @@ class Runtime {
   [[noreturn]] static void bad_jump_table(uint32_t pc, uint32_t target);
 
   const Stats& stats() const { return stats_; }
+  // Called by recompiled code when a callee returned to a continuation address.
+  uint64_t& nonstandard_returns() { return stats_.nonstandard_returns; }
 
   // Safe point emitted on every loop back-edge. Every 1024 ticks the hook (the kernel) may
   // deliver interrupts or switch threads, so guest busy-wait loops make progress.

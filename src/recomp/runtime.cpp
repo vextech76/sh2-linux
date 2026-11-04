@@ -29,9 +29,13 @@ uint32_t Runtime::call(ee::Cpu& c, ee::Memory& m, uint32_t target) {
       GuestFn fn = find(t);
       if (!fn) return false;
       ++stats_.native_calls;
-      uint32_t expected = static_cast<uint32_t>(cc.r(31));
-      uint32_t got = fn(cc, mm, *this);
-      if (got != expected) bad_return(t, expected, got);
+      const uint32_t expected = static_cast<uint32_t>(cc.r(31));
+      const uint32_t got = fn(cc, mm, *this);
+      if (got != expected) {  // a continuation: run interpreted code from where the callee went
+        ++stats_.nonstandard_returns;
+        cc.pc = got;
+        stats_.interpreted_steps += interp_.run(cc, mm, expected);
+      }
       return true;
     });
     interp_hooked_ = true;

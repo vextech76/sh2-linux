@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
 #include <map>
 
@@ -17,6 +18,12 @@ class Rasterizer {
   struct Stats {
     uint64_t triangles = 0, sprites = 0, lines = 0, points = 0, pixels_written = 0, pixels_tested = 0;
     std::map<uint32_t, uint64_t> texture_samples;  // PSM -> textured pixels (which formats the game uses)
+    // Texture descriptors actually sampled: (tbp, tbw, psm, tw, th) -> textured pixels.
+    struct TexDesc {
+      uint32_t tbp = 0, tbw = 0, psm = 0, tw = 0, th = 0;
+      auto operator<=>(const TexDesc&) const = default;
+    };
+    std::map<TexDesc, uint64_t> textures;
   };
   const Stats& stats() const { return stats_; }
 

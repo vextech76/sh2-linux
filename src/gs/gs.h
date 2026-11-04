@@ -58,6 +58,8 @@ class Gs {
 
   // Compose the currently displayed image (read circuit 2, else 1) from local memory.
   Image display() const;
+  // Sample a texture region as an image (debug aid: shows the decoded texture content).
+  Image sample_texture(uint32_t tbp, uint32_t tbw, uint32_t psm, uint32_t tw, uint32_t th) const;
 
   struct Stats {
     uint64_t image_transfers = 0, image_pixels = 0, local_copies = 0;

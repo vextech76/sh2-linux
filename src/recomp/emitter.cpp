@@ -89,7 +89,15 @@ struct FunctionEmitter {
       if (from_pc && target <= from_pc) return std::format("rt.tick(); goto L_{:08x};", target);
       return std::format("goto L_{:08x};", target);
     }
-    if (known.contains(target)) return std::format("return {}(c, m, rt);", function_symbol(target, overlay));
+    // Tail call/jump. The callee returns to whatever $ra holds *now* -- guest code deliberately
+    // sets $ra before jumping to create continuations, so the expectation is read at runtime.
+    if (known.contains(target))
+      return std::format(
+          "{{ const uint32_t exp_ = static_cast<uint32_t>(c.r(31));\n"
+          "    const uint32_t r_ = {}(c, m, rt);\n"
+          "    if (r_ != exp_) [[unlikely]] ++rt.nonstandard_returns();\n"
+          "    return r_; }}",
+          function_symbol(target, overlay), from_pc);
     return std::format("return rt.jump(c, m, 0x{:08x}u);", target);
   }
 
@@ -98,9 +106,12 @@ struct FunctionEmitter {
     std::string callee = target && known.contains(*target)
                              ? std::format("{}(c, m, rt)", function_symbol(*target, overlay))
                              : std::format("rt.call(c, m, {})", target_expr);
-    line(std::format(
-        "if (uint32_t r_ = {}; r_ != 0x{:08x}u) [[unlikely]] Runtime::bad_return(0x{:08x}u, 0x{:08x}u, r_);", callee,
-        ret, pc, ret));
+    // The guest may deliberately return to a continuation instead of the instruction after the
+    // call (SH2's quicksort does this): follow it, but count it so it stays visible.
+    line(
+        std::format("if (const uint32_t r_ = {}; r_ != 0x{:08x}u) [[unlikely]] {{ ++rt.nonstandard_returns(); "
+                    "return rt.jump(c, m, r_); }}",
+                    callee, ret));
   }
 
   void emit() {

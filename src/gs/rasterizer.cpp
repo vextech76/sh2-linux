@@ -57,6 +57,7 @@ void Rasterizer::shade(Gs& gs, int x, int y, const Attr& at) {
       fv = at.t / q * static_cast<float>(th);
     }
     ++stats_.texture_samples[psm];
+    ++stats_.textures[{tbp, tbw, psm, tw, th}];
     const uint64_t texa = gs.reg(0x3B);
     const uint32_t wms = static_cast<uint32_t>(bits(clampr, 0, 2)), wmt = static_cast<uint32_t>(bits(clampr, 2, 2));
     const uint32_t minu = static_cast<uint32_t>(bits(clampr, 4, 10)),
