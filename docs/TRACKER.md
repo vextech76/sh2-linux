@@ -17,6 +17,9 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
+| LAN-22 | Memory card model + mcman service | in_progress | | card file/format done; presence check unsatisfied |
+| LAN-25 | Follow guest continuations in recompiled calls | done | | found by reaching the title screen |
+| LAN-26 | Turbo mode stalls boot (timing divergence) | todo | | paced mode works; investigate before using turbo for behaviour |
 | LAN-19 | padman HLE -> InputSystem | done | | |
 | LAN-21 | Local-memory layout derived from documented structure; PSMT8 order measured | done | | |
 | LAN-20 | GS display in the Vulkan window | done | | |

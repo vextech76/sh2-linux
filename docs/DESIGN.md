@@ -321,9 +321,17 @@ EE ──DMA ch1──▶ VIF1 ──DIRECT──▶ GIF PATH2 ─┐
   selects "Yes" on the memory-card prompt, Cross confirms, the game proceeds to the Konami logo
   and the SILENT HILL 2 title screen.
 
-**Known visual defect:** the title screen's textures are scrambled within 16-pixel blocks: the
-game aliases texture formats there, which the provisional 8/4-bit in-block order (§8.3) cannot
-reproduce. Exact PSMT8/PSMT4 column tables are the next fix.
+**Title screen now renders correctly** with the measured PSMT8 order (§8.3): the logo is legible
+and the remaining grain is the game's own background effect.
+
+**Recompiler fix for guest continuations:** SH2 sets `$ra` and jumps to create continuations (its
+quicksort does). Recompiled calls now *follow* a non-standard return address instead of trapping
+(`Runtime::nonstandard_returns` counts them; reported in the boot log). Before the fix the game
+trapped at 0x00175188 as soon as it left the title screen.
+
+**`--turbo`** advances one game frame per VBlank for automated checks (~11,000 frames/s). It
+changes guest timing enough that boot stalls early in the module-load phase, so paced mode is used
+for behaviour checks; the investigation of that divergence is tracked (LAN-26).
 
 ### 8.5 Memory card (LAN-22) 🟡
 
