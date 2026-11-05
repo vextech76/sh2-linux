@@ -20,6 +20,9 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-22 | Memory card model + mcserv protocol (info path) | done | | game detects a formatted 8184 KB card |
 | LAN-27 | Title screen ignores input (menu unreachable) | in_progress | | guest trace: input IS processed; transition gated downstream (sound) — see docs/TITLE-TRACE.md |
 | LAN-30 | Guest tracing tools (hot PCs, pad read watch, stack walk) | done | | |
+| LAN-31 | IOP: R3000A decoder + interpreter (load delay) | done | | 28 tests; GNU-verified encodings |
+| LAN-32 | IOP: IRX loader (ELF, relocations) into IOP RAM | todo | | |
+| LAN-33 | IOP: kernel/library HLE + SPU2 | todo | | |
 | LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
 | LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |
 | LAN-25 | Follow guest continuations in recompiled calls | done | | found by reaching the title screen |

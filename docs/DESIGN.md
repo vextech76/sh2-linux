@@ -362,6 +362,28 @@ every frame through libpad, and the input gate in the game's own handler (0x0018
 is delivered and processed; the title→menu transition is gated downstream of input, and the
 remaining dependency is almost certainly the sound system (Stage 9).
 
+### 9.1 IOP CPU core (Stage 9, first step) ✅
+
+Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented so far:
+
+- `iop/r3000.*`: MIPS I decoder and disassembler for the IOP (no 64-bit, MMI, FPU or coprocessor
+  data transfers — the IOP has none of these). Reserved fields must be zero, which keeps data from
+  decoding as instructions. Verified against **68 golden encodings assembled by GNU binutils**
+  (`-march=r3000`, disassembled with `-m mips:3000`), including branch/jump text at the real
+  addresses.
+- `iop/iop_cpu.h`: 32-bit register file, HI/LO, COP0, 2 MB RAM with kuseg/kseg0/kseg1 mapping,
+  1 KB scratchpad, MMIO hook.
+- `iop/iop_interp.*`: interpreter with **load delay slots** (the instruction after a load still
+  sees the old value; back-to-back loads keep only the last — hardware behaviour), branch delay
+  slots, link written before the slot runs, MIPS I DIV/DIVU-by-zero results, address-error traps
+  and an explicit trap for anything unimplemented. A syscall hook is in place for the IOP kernel.
+- Unit tests: golden encodings, load-delay behaviour (including the back-to-back case), delay slot
+  plus `jal` link ordering, HI/LO arithmetic, traps, and the absence of EE-only instructions.
+
+Not yet: IRX loading (ELF + relocations) into IOP RAM, the IOP kernel/library HLE that modules
+import (thbase, intrman, sifman, libsd, …), SPU2, and the SIF DMA path into the IOP CPU. Those are
+the next Stage-9 steps (LAN-31..LAN-33).
+
 ## 9. Known limitations / risks
 
 - **No game runs yet.** Stages 1–7 core are complete (platform, input, config, Vulkan, ingest,
