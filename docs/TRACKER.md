@@ -28,7 +28,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-36 | IOP: SPU2 registers, voices, ADPCM, DMA | done | | tests: register/playback/ENDX/IRQ/transfer |
 | LAN-37 | IOP: SIF RPC bridge to real sound modules | done | | 1,970 calls, 0 failures in a 2,100-frame run |
 | LAN-38 | IOP: true interrupt vector for SPU2/DMA/vblank | todo | | handlers currently run as guest callbacks |
-| LAN-39 | Title→menu blocker + shared-IOP file-table regression | in_progress | | EE loader waits on semaphores after Start; sound path opt-in |
+| LAN-39 | Title→menu blocker | in_progress | | separate sound/HLE memories fixed the file-table regression; Start still does not load MENU.MGF |
 | LAN-40 | Audio: SDL3 output for SPU2 PCM | todo | | mixer peak is 0 at the title (no voice keyed on) |
 | LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
 | LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |

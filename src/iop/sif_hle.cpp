@@ -31,20 +31,11 @@ std::string SifHle::server_name(uint32_t sid) const {
   return it == servers_.end() ? std::format("unknown 0x{:08x}", sid) : std::format("{} 0x{:08x}", it->second.name, sid);
 }
 
-uint8_t SifHle::iop_read8(uint32_t a) const {
-  if (iop_) return iop_->mem().read<uint8_t>(a & (kIopRamSize - 1));
-  return iop_ram_[a % kIopRamSize];
-}
+uint8_t SifHle::iop_read8(uint32_t a) const { return iop_ram_[a % kIopRamSize]; }
 
-void SifHle::iop_write8(uint32_t a, uint8_t v) {
-  if (iop_)
-    iop_->mem().write<uint8_t>(a & (kIopRamSize - 1), v);
-  else
-    iop_ram_[a % kIopRamSize] = v;
-}
+void SifHle::iop_write8(uint32_t a, uint8_t v) { iop_ram_[a % kIopRamSize] = v; }
 
 uint32_t SifHle::iop32(uint32_t a) const {
-  if (iop_) return iop_->mem().read<uint32_t>(a & (kIopRamSize - 1));
   uint32_t v;
   std::memcpy(&v, &iop_ram_[a % kIopRamSize], 4);
   return v;
@@ -132,11 +123,10 @@ void SifHle::handle_command(uint32_t a) {
                    recv_size, buff, hex, txt);
       }
       if (const RpcServerInfo* real = iop_ ? iop_->find_rpc(sid) : nullptr) {
-        // The EE wrote the send buffer to the address returned at bind time; make sure the real
-        // server's own buffer has the same bytes.
+        // The fake-services RAM is private; copy the EE's send buffer into the real runtime's
+        // server buffer before invoking the guest server.
         const uint32_t dst = real->buff ? real->buff : buff;
-        if (dst != buff)
-          for (uint32_t i = 0; i < send_size; ++i) iop_write8(dst + i, iop_read8(buff + i));
+        for (uint32_t i = 0; i < send_size; ++i) iop_->mem().write<uint8_t>(dst + i, iop_read8(buff + i));
         std::vector<uint8_t> reply;
         std::string rerr;
         if (iop_->call_rpc(*real, fno, send_size, recv_size, &reply, &rerr)) {

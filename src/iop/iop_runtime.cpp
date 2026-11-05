@@ -23,10 +23,9 @@ constexpr uint32_t kInitStepBudget = 1500000;
 IopRuntime::IopRuntime() : hle_(mem_), sched_(mem_, interp_), kernel_(hle_, sched_) {
   // Sound-only modules end well below 0xA0000 (the SIF command buffer) and 0x100000 (the fake
   // service buffers). Keep the IOP heap in the free window between them.
-  // Sound-only modules end below 0x5E000. The real heap owns 0x60000..0x140000; the fake
-  // service buffers and heap live above it (0x140000..0x1F0000).
-  kernel_.heap.next = 0x00060000;
-  kernel_.heap.end = 0x00100000;
+  // This runtime has its own 2 MiB image; the fake services use a separate one.
+  kernel_.heap.next = 0x00100000;
+  kernel_.heap.end = 0x001F0000;
   callback_stack_top_ = kernel_.heap.alloc(0x2000) + 0x2000;
   rpc_stack_base_ = kernel_.heap.alloc(0x4000);
 

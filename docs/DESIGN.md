@@ -410,10 +410,10 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
 
 ### 9.4 Real IOP runtime and sound RPC bridge ✅
 
-- `iop_runtime.*` packages RAM, interpreter, scheduler, kernel HLE and the game's modules. With
-  `--sound-iop`, boot loads LIBSD/SD_CD/SDSTR/SOUNDCD, runs their initialisers and threads between
-  EE frames, and shares RAM with `SifHle`. The default path stays on the HLE services because the
-  shared layout currently disturbs the EE's first file-table search (LAN-39).
+- `iop_runtime.*` packages RAM, interpreter, scheduler, kernel HLE and the game's modules. Boot
+  loads LIBSD/SD_CD/SDSTR/SOUNDCD, runs their initialisers and threads between EE frames, and keeps
+  that image separate from the fake HLE services; only RPC payloads cross the bridge. This avoids
+  the file-table corruption seen when both shared one image.
 - `SifHle` forwards RPC calls for SIDs registered by real modules to their guest server functions;
   thbase alarms and timrman handlers are scheduled on the virtual clock and run as guest threads.
   A 2,100-frame run served 1,970 real sound RPC calls with zero failures.

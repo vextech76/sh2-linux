@@ -314,7 +314,9 @@ void Kernel::deliver_due(double now) {
     const auto [id, a] = *it;
     it = alarms_.erase(it);
     ++stats_.alarms_fired;
-    call_handler(a.handler, static_cast<uint32_t>(id), static_cast<uint16_t>(now * kHsyncHz), a.arg);
+    // EE SetAlarm handlers take their user argument in a0; passing the alarm id here prevents
+    // handlers from finding their state and re-arming, which stalls timer-driven animations.
+    call_handler(a.handler, a.arg, 0, 0);
   }
   // GS FINISH/SIGNAL interrupts (INTC cause 0).
   if (hw_.take_gs_interrupt() && (hw_.intc_mask() & 1u)) {
@@ -534,10 +536,13 @@ void Kernel::dispatch(int num) {
       make_ready(t);
       return ret(t->id);
     }
-    case 0x23: exit_current_thread(false);  // ExitThread
-    case 0x24: exit_current_thread(true);   // ExitDeleteThread
-    case 0x25: {                            // TerminateThread(id)
+    case 0x23: log::debug(kSub, "ExitThread by thread {}", current_->id); exit_current_thread(false);  // ExitThread
+    case 0x24:
+      log::debug(kSub, "ExitDeleteThread by thread {}", current_->id);
+      exit_current_thread(true);  // ExitDeleteThread
+    case 0x25: {                  // TerminateThread(id)
       Thread* t = thread(static_cast<int>(arg(0)));
+      log::debug(kSub, "TerminateThread({}) by thread {}", arg(0), current_->id);
       if (!t || (t == current_ && t->state == State::Running)) return ret(-1);
       t->state = State::Dormant;
       t->ctx_ready = false;
@@ -546,6 +551,7 @@ void Kernel::dispatch(int num) {
     }
     case 0x21: {  // DeleteThread(id)
       Thread* t = thread(static_cast<int>(arg(0)));
+      log::debug(kSub, "DeleteThread({}) by thread {}", arg(0), current_->id);
       if (!t || t->state != State::Dormant || t == current_) return ret(-1);
       if (t->host_stack) munmap(t->host_stack, t->host_stack_size);
       threads_.erase(t->id);

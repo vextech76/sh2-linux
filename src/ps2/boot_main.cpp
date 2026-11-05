@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
   double seconds = 20;
   bool trace = false;
   bool window = false;
-  bool sound_iop = false;
+  bool sound_iop = true;
   bool audio_on = true;
   bool turbo = false;
   char mc_probe = 'A';

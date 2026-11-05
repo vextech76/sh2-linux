@@ -108,20 +108,18 @@ frames mixed, peak 0`. The mixer is exercised by unit tests with synthetic ADPCM
 
 ## Real sound modules in the boot runtime
 
-`iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. With
-`--sound-iop`, `lantern-boot` loads `LIBSD.IRX`, `SD_CD.IRX`, `SDSTR.IRX` and `SOUNDCD.IRX`, starts
-their initialisers and runs their threads between EE frames (100k IOP instructions per frame).
-`SifHle` shares the runtime's RAM and, for a SID registered by a real module, sends the RPC call to
-that module's server instead of the placeholder. The sound driver registers SID `0x15` with
-function `0x478` and buffer `0x56700`; in a 2,100-frame run the bridge served **1,970 real RPC calls
-with zero failures**.
+`iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. `lantern-boot`
+loads `LIBSD.IRX`, `SD_CD.IRX`, `SDSTR.IRX` and `SOUNDCD.IRX`, starts their initialisers and runs
+their threads between EE frames (100k IOP instructions per frame). The fake HLE services (pad,
+memory card, CDVD) keep their own 2 MiB image; the sound runtime has a separate image, and only RPC
+payloads cross the bridge. That separation is essential: sharing one image made the game's first
+`sceCdSearchFile` see a zeroed name and abort its file-table load.
 
-The real-sound path is **opt-in** because sharing the fake service RAM with the sound runtime
-currently makes the game's first `sceCdSearchFile`/file-table load fail (the search packet reaches
-the IOP with a zeroed name, so the game never loads its file table and aborts the boot path). The
-default `lantern-boot` path keeps the proven HLE services and title screen; the sound runtime is
-used by `lantern-iop` and by `--sound-iop` for diagnosis. Resolving that shared-memory/layout
-interaction is part of LAN-39.
+For a SID registered by a real module, `SifHle` copies the EE's send buffer into the real server's
+buffer, invokes the guest server through the scheduler, and writes the result back to the EE. The
+sound driver registers SID `0x15` with function `0x478` and buffer `0x56700`; a 2,100-frame run
+served **1,970 real RPC calls with zero failures** alongside valid CD searches. `--no-sound-iop`
+falls back to the placeholder sound service.
 
 Thbase alarms and timrman handlers are now real: they are scheduled on the IOP virtual clock and run
 as high-priority guest threads (`IopScheduler::schedule_callback`), one at a time. That is what
