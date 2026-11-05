@@ -82,6 +82,10 @@ class Kernel final : public ee::Hooks {
   std::vector<ThreadContext> thread_contexts() const;
 
   static constexpr uint32_t kReturnSentinel = 0x00000100;  // guest "return to kernel" address
+  // Run guest code from `target` until it returns to kReturnSentinel. A top-level guest function may
+  // return to a continuation (setjmp/longjmp-style state switches); those are followed, not
+  // treated as the function having finished.
+  void run_to_sentinel(uint32_t target);
 
  private:
   struct Regs {

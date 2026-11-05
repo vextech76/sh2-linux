@@ -239,3 +239,31 @@ TEST_CASE("every decodable opcode has semantics, is control flow, or is explicit
     CHECK_FALSE((has_semantics(op) && control.contains(op)));
   }
 }
+
+TEST_CASE("run_until_return follows a manual return stack (continuation semantics)") {
+  // Like SH2's quicksort: the continuation pops $ra from a stack in s6 and returns with jr $ra.
+  // Popping lands on the same continuation until the stack yields the real return address.
+  // Call semantics (run until pc == $ra) would stop immediately because $ra already equals the
+  // continuation address.
+  Machine m;
+  constexpr uint32_t kCont = kBase + 0x40;
+  constexpr uint32_t kStack = 0x00200000;
+  m.load({lw(ra, 0, s6), addiu(t0, t0, 1), jr(ra), addiu(s6, s6, 4)}, kCont);
+  m.mem.write<uint32_t>(kStack + 0, kCont);
+  m.mem.write<uint32_t>(kStack + 4, kCont);
+  m.mem.write<uint32_t>(kStack + 8, kRet);
+  m.cpu.r(s6) = kStack;
+  m.cpu.r(ra) = kCont;  // stale: identical to the continuation itself
+  m.cpu.r(t0) = 0;
+
+  uint32_t where = kCont;
+  int hops = 0;
+  for (; where != kRet && hops < 10; ++hops) {
+    m.cpu.pc = where;
+    where = m.interp.run_until_return(m.cpu, m.mem, nullptr, 1000);
+  }
+  CHECK(where == kRet);
+  CHECK(hops == 3);     // one hop per popped frame
+  CHECK(m.s(t0) == 3);  // every frame's body executed
+  CHECK(m.cpu.r(s6) == kStack + 12);
+}

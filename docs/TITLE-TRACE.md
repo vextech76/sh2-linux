@@ -42,12 +42,37 @@ the shipping game and LANTERN's own tooling; no emulator sources were consulted.
    | 0 (pad) | 20 | 0x01 | 0x11 (bit 4 set) | processed |
    | 1 (empty) | 20 | 0x00 | 0x00 | skipped (correct) |
 
-## Conclusion
+## Conclusion (superseded — see "Resolution")
 
 Input reaches the game and is processed on every frame at the title screen. The title→menu
-transition therefore depends on something downstream of input — most plausibly the sound system
-(SH2 fades/starts music at that point), which is Stage 9. Service-side candidates (memory card,
-pad handshake, thread health, a "ready" sound reply) were each tested and ruled out.
+transition therefore depended on something downstream of input. The sound system was the leading
+hypothesis at the time; it turned out to be wrong (the real sound modules made no difference).
+
+## Resolution
+
+The blocker was in the recompiler runtime's handling of **continuations**, not in any service.
+
+1. With Start pressed, the EE main thread (thread 1) became *dormant* although nothing called
+   `ExitThread`/`TerminateThread`: its top-level guest function had *returned*, and the kernel
+   trampoline treats a return as thread exit. Without a press, thread 1 kept running and the
+   report showed 0 non-standard returns; with a press it showed 7.
+2. The return came from the game's quicksort at `0x00174F..0x175060`, which keeps its own return
+   stack in `s6`: the continuation at `0x00175048` does `lwu ra,12(s6) … jr ra; addiu s6,s6,16`,
+   so it repeatedly "returns" to itself until the stack yields the real caller.
+3. `Runtime::jump` used *call* semantics (interpret until `pc == $ra`). At that continuation `$ra`
+   already equals `0x175048`, so the interpreter stopped before executing a single instruction and
+   reported a return to `0x175048`. Each host frame then saw a mismatch and unwound, until the
+   thread's top-level call returned and the trampoline ended the thread.
+
+Fixes (LAN-39):
+
+- `Interpreter::run_until_return` runs a continuation until it returns with `jr $ra` and reports
+  where it went; `Runtime::jump` uses it for anything that is not a recompiled function start.
+- `Kernel::run_to_sentinel` keeps following continuations at the top level of threads, interrupt
+  handlers and custom syscalls until control really returns to the kernel sentinel.
+
+Result: pressing Start at the title now opens the difficulty menu (Action Level / Riddle Level).
+A unit test reproduces the manual-return-stack pattern.
 
 ## Practical note: rebuild the generated library
 

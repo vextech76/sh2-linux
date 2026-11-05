@@ -430,8 +430,16 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
 - Unit tests cover register readback, ADPCM playback, key-on/off ENDX + IRQ, loop end and the
   transfer data port.
 
-Not yet: routing PCM to a host audio device, a real interrupt context, VU1/IPU execution, and the
-remaining title→menu blocker (the EE loader still waits on semaphores after Start). LAN-38..LAN-40.
+### 9.6 Continuations and the title→menu transition ✅
+
+The game's quicksort keeps a manual return stack and resumes mid-function. `Runtime::jump` now runs
+non-function targets with *run-until-return* semantics (`Interpreter::run_until_return`), and the
+kernel follows continuations at the top level of threads/handlers (`Kernel::run_to_sentinel`).
+That was the real title→menu blocker: Start now opens the difficulty menu. See
+`docs/TITLE-TRACE.md`.
+
+Not yet: a real IOP interrupt context, VU1/IPU execution, and verified audio output with keyed-on
+voices. LAN-38, LAN-40 and the Stage 8/10 items.
 
 ## 9. Known limitations / risks
 

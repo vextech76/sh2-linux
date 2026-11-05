@@ -17,34 +17,49 @@ GuestFn Runtime::find(uint32_t addr) const {
   return it == main_.end() ? nullptr : it->second;
 }
 
+void Runtime::ensure_call_hook() {
+  if (interp_hooked_) return;
+  // Interpreted code calling back into recompiled code goes through the same dispatch.
+  interp_.set_call_hook([this](ee::Cpu& cc, ee::Memory& mm, uint32_t t) {
+    GuestFn fn = find(t);
+    if (!fn) return false;
+    ++stats_.native_calls;
+    const uint32_t expected = static_cast<uint32_t>(cc.r(31));
+    const uint32_t got = fn(cc, mm, *this);
+    if (got != expected) {  // a continuation: run interpreted code from where the callee went
+      ++stats_.nonstandard_returns;
+      cc.pc = got;
+      stats_.interpreted_steps += interp_.run(cc, mm, expected);
+    }
+    return true;
+  });
+  interp_hooked_ = true;
+}
+
 uint32_t Runtime::call(ee::Cpu& c, ee::Memory& m, uint32_t target) {
   if (GuestFn fn = find(target)) {
     ++stats_.native_calls;
     return fn(c, m, *this);
   }
   if (!fallback_) throw ee::GuestTrap(target, std::format("no recompiled function at 0x{:08x}", target));
-  if (!interp_hooked_) {
-    // Interpreted code calling back into recompiled code goes through the same dispatch.
-    interp_.set_call_hook([this](ee::Cpu& cc, ee::Memory& mm, uint32_t t) {
-      GuestFn fn = find(t);
-      if (!fn) return false;
-      ++stats_.native_calls;
-      const uint32_t expected = static_cast<uint32_t>(cc.r(31));
-      const uint32_t got = fn(cc, mm, *this);
-      if (got != expected) {  // a continuation: run interpreted code from where the callee went
-        ++stats_.nonstandard_returns;
-        cc.pc = got;
-        stats_.interpreted_steps += interp_.run(cc, mm, expected);
-      }
-      return true;
-    });
-    interp_hooked_ = true;
-  }
+  ensure_call_hook();
   ++stats_.interpreted_calls;
   const uint32_t ret = static_cast<uint32_t>(c.r(31));
   c.pc = target;
   stats_.interpreted_steps += interp_.run(c, m, ret);
   return ret;
+}
+
+uint32_t Runtime::jump(ee::Cpu& c, ee::Memory& m, uint32_t target) {
+  if (GuestFn fn = find(target)) {
+    ++stats_.native_calls;
+    return fn(c, m, *this);
+  }
+  if (!fallback_) throw ee::GuestTrap(target, std::format("no recompiled function at 0x{:08x}", target));
+  ensure_call_hook();
+  ++stats_.interpreted_calls;
+  c.pc = target;
+  return interp_.run_until_return(c, m, &stats_.interpreted_steps);
 }
 
 void Runtime::bad_return(uint32_t call_pc, uint32_t expected, uint32_t actual) {

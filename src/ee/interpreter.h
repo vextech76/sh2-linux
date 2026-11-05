@@ -29,6 +29,12 @@ class Interpreter {
   // Returns the number of instructions executed. Throws GuestTrap after `max_steps`.
   uint64_t run(Cpu& c, Memory& m, uint32_t stop_pc, uint64_t max_steps = 1ull << 32);
 
+  // Run from c.pc as a *continuation*: execute until the code returns with `jr $ra` and report the
+  // address it returned to (c.pc is left there). Calls made on the way are executed with call
+  // semantics. Used when guest code resumes mid-function (manual return stacks, longjmp-style
+  // switches), where the incoming $ra says nothing about where the code will return.
+  uint32_t run_until_return(Cpu& c, Memory& m, uint64_t* steps, uint64_t max_steps = 1ull << 32);
+
  private:
   CallHook call_hook_;
 };

@@ -84,4 +84,55 @@ uint64_t Interpreter::run(Cpu& c, Memory& m, uint32_t stop_pc, uint64_t max_step
   return steps;
 }
 
+uint32_t Interpreter::run_until_return(Cpu& c, Memory& m, uint64_t* steps_out, uint64_t max_steps) {
+  uint64_t steps = 0;
+  for (;;) {
+    if (++steps > max_steps) throw GuestTrap(c.pc, "interpreter step budget exhausted");
+    const uint32_t pc = c.pc;
+    const Insn in = decode(m.read<uint32_t>(pc), pc);
+    if (!in.valid()) throw GuestTrap(pc, std::format("invalid instruction 0x{:08x} at 0x{:08x}", in.word, pc));
+    if (!in.has(kDelay)) {
+      if (in.op == Op::ERET) throw GuestTrap(pc, "ERET outside the HLE kernel");
+      execute_plain(c, m, in);
+      c.pc = pc + 4;
+      continue;
+    }
+
+    bool taken = true;
+    uint32_t target = in.target;
+    if (in.has(kBranch)) taken = branch_taken(c, in);
+    if (in.op == Op::JR || in.op == Op::JALR) target = static_cast<uint32_t>(c.r(in.rs));
+    if (in.has(kLink)) sem::set(c, in.op == Op::JALR ? in.rd : 31, pc + 8);
+
+    if (!taken && in.has(kLikely)) {
+      c.pc = pc + 8;
+      continue;
+    }
+    const Insn slot = decode(m.read<uint32_t>(pc + 4), pc + 4);
+    if (slot.has(kDelay)) throw GuestTrap(pc + 4, "control transfer in a delay slot");
+    if (!slot.valid()) throw GuestTrap(pc + 4, std::format("invalid instruction 0x{:08x} in delay slot", slot.word));
+    execute_plain(c, m, slot);
+    ++steps;
+
+    if (!taken) {
+      c.pc = pc + 8;
+      continue;
+    }
+    if (in.op == Op::JR && in.rs == 31) {  // the continuation returns to its caller
+      c.pc = target;
+      if (steps_out) *steps_out += steps;
+      return target;
+    }
+    if (in.has(kLink)) {
+      if (!(call_hook_ && call_hook_(c, m, target))) {
+        c.pc = target;
+        steps += run(c, m, pc + 8, max_steps);  // interpreted callee: call semantics
+      }
+      c.pc = pc + 8;
+      continue;
+    }
+    c.pc = target;
+  }
+}
+
 }  // namespace lantern::ee

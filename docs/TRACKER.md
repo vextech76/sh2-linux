@@ -18,7 +18,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
 | LAN-12 | SPU2 audio, IPU FMV | todo | | |
 | LAN-22 | Memory card model + mcserv protocol (info path) | done | | game detects a formatted 8184 KB card |
-| LAN-27 | Title screen ignores input (menu unreachable) | in_progress | | guest trace: input IS processed; transition gated downstream (sound) — see docs/TITLE-TRACE.md |
+| LAN-27 | Title screen ignores input (menu unreachable) | done | | root cause: continuation semantics (see LAN-39, docs/TITLE-TRACE.md) |
 | LAN-30 | Guest tracing tools (hot PCs, pad read watch, stack walk) | done | | |
 | LAN-31 | IOP: R3000A decoder + interpreter (load delay) | done | | 30 tests; GNU-verified encodings |
 | LAN-32 | IOP: IRX loader (ELF, relocations, imports) + probe | done | | 11 modules load; see docs/IOP.md |
@@ -28,7 +28,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-36 | IOP: SPU2 registers, voices, ADPCM, DMA | done | | tests: register/playback/ENDX/IRQ/transfer |
 | LAN-37 | IOP: SIF RPC bridge to real sound modules | done | | 1,970 calls, 0 failures in a 2,100-frame run |
 | LAN-38 | IOP: true interrupt vector for SPU2/DMA/vblank | todo | | handlers currently run as guest callbacks |
-| LAN-39 | Title→menu blocker | in_progress | | separate sound/HLE memories fixed the file-table regression; Start still does not load MENU.MGF |
+| LAN-39 | Title→menu blocker | done | | run_until_return continuations + run_to_sentinel; Start opens the difficulty menu |
 | LAN-40 | Audio: SDL3 output for SPU2 PCM | todo | | mixer peak is 0 at the title (no voice keyed on) |
 | LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
 | LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |

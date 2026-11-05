@@ -41,8 +41,9 @@ class Runtime {
   // Call `target` with $ra already set to the return address. Returns the address the callee
   // returned to.
   uint32_t call(ee::Cpu& c, ee::Memory& m, uint32_t target);
-  // Tail jump to `target` (J/JR to code outside the current function).
-  uint32_t jump(ee::Cpu& c, ee::Memory& m, uint32_t target) { return call(c, m, target); }
+  // Tail jump / continuation to `target`: run it and report where it finally returns to. Native
+  // functions run natively; anything else is interpreted until it returns (`jr $ra`).
+  uint32_t jump(ee::Cpu& c, ee::Memory& m, uint32_t target);
 
   [[noreturn]] static void bad_return(uint32_t call_pc, uint32_t expected, uint32_t actual);
   [[noreturn]] static void unimplemented(uint32_t word, uint32_t pc);
@@ -60,6 +61,8 @@ class Runtime {
   }
 
  private:
+  void ensure_call_hook();
+
   std::unordered_map<uint32_t, GuestFn> main_;
   std::unordered_map<int, std::unordered_map<uint32_t, GuestFn>> overlays_;
   uint32_t ov_base_ = 0, ov_end_ = 0;

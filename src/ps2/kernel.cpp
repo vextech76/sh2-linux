@@ -190,6 +190,15 @@ void Kernel::switch_to(Thread* next) {
 #endif
 }
 
+void Kernel::run_to_sentinel(uint32_t target) {
+  uint32_t r = rt_.call(c_, m_, target);
+  for (int hops = 0; r != kReturnSentinel; ++hops) {
+    if (hops > 1000000) throw ee::GuestTrap(r, "guest continuation chain did not return to the kernel");
+    ++rt_.nonstandard_returns();
+    r = rt_.jump(c_, m_, r);
+  }
+}
+
 void Kernel::trampoline() {
 #ifdef LANTERN_ASAN
   __sanitizer_finish_switch_fiber(nullptr, nullptr, nullptr);
@@ -197,7 +206,7 @@ void Kernel::trampoline() {
   Kernel& k = *g_kernel;
   bool to_boot = false;
   try {
-    k.rt_.call(k.c_, k.m_, k.current_->func);
+    k.run_to_sentinel(k.current_->func);
     k.exit_current_thread(false);
   } catch (const GuestExit& e) {
     k.exit_code_ = e.code;
@@ -270,7 +279,7 @@ void Kernel::call_handler(uint32_t func, uint32_t a0, uint32_t a1, uint32_t a2) 
   c_.r(29) = kInterruptStackTop;
   c_.r(31) = kReturnSentinel;
   try {
-    rt_.call(c_, m_, func);
+    run_to_sentinel(func);
   } catch (...) {
     in_interrupt_ = was;
     throw;
@@ -407,7 +416,7 @@ void Kernel::syscall(ee::Cpu& c, ee::Memory&, uint32_t pc) {
     save(saved);
     c.r(29) = (c.r(29) - 0x400) & ~0xFull;
     c.r(31) = kReturnSentinel;
-    rt_.call(c_, m_, it->second);
+    run_to_sentinel(it->second);
     const auto v0 = c.gpr[2], v1 = c.gpr[3];
     load(saved);
     c.gpr[2] = v0;
