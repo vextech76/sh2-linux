@@ -419,8 +419,18 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
 - After Start the EE main thread terminates, but the game does not yet load `MENU.MGF`; the display
   remains on the title. The remaining suspects are SPU2/DMA completion and VU1/IPU.
 
-Not yet: an IOP interrupt context, the SPU2 register/voice/DMA model, VU1/IPU execution, and the
-remaining title→menu blocker. Those are LAN-36..LAN-39.
+### 9.5 SPU2 core ✅
+
+- `spu2.*`: two cores, 24 voices each, register file, key on/off, ENDX/STATX, master volumes,
+  transfer address/data, 2 MiB sample RAM, PS-ADPCM decoding, loop/end handling and a 48 kHz
+  stereo mixer.
+- IOP DMA channels 0/1 copy blocks between IOP RAM and SPU2 RAM and raise the SPU2 DMA IRQs;
+  `intrman` handlers are real and run on those IRQ lines (as guest callbacks, not a CPU vector).
+- Unit tests cover register readback, ADPCM playback, key-on/off ENDX + IRQ, loop end and the
+  transfer data port.
+
+Not yet: routing PCM to a host audio device, a real interrupt context, VU1/IPU execution, and the
+remaining title→menu blocker (the EE loader still waits on semaphores after Start). LAN-38..LAN-40.
 
 ## 9. Known limitations / risks
 

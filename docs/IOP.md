@@ -169,24 +169,23 @@ and stub patching, entry-point calling convention, `loadcore` library registrati
 `KE_OK`), a bump `sysmem` allocator, the priority scheduler with blocking waits and a virtual
 clock, semaphore counts and hand-off, hardware-timer allocation/register state, thbase alarms and
 timrman callbacks (as guest threads), vblank wakeups, the 36.864 MHz clock conversions, the SIF RPC
-bridge to real IOP servers, and the R3000A execution itself.
+bridge to real IOP servers, the SPU2 register/voice/ADPCM/DMA core, intrman handlers on IRQ lines,
+and the R3000A execution itself.
 
 Probe-only shims, marked here so they are not mistaken for final semantics:
 
-- IOP interrupts are not delivered. Timer/alarm callbacks run as guest threads, not on an interrupt
-  vector; SPU2/DMA completion has no IRQ path yet.
+- IOP interrupts are not delivered on a real vector. Timer/alarm and SPU2/DMA handlers run as guest
+  threads; the CPU does not push an interrupt frame.
 - SIF transfers complete immediately; the EE-side command parser still owns packet marshalling and
   the boot path still uses the HLE services for pad, memory card and CDVD.
-- Unmapped I/O reads return zero and writes are logged; the SPU2 and DMA registers have no
-  behaviour yet. This is now the main title→menu suspect.
+- The SPU2 model does not implement reverb, noise, pitch modulation or SPDIF; unmapped I/O still
+  returns zero. Audio is mixed but not yet routed to a host audio device.
 - `WaitVblankStart/End/WaitVblank/WaitNonVblank` all wake at the next frame.
 
 ## Next steps
 
-1. Implement the measured SPU2 register block, voice mixing and SPU2 DMA, then feed PCM to the
-   audio backend and deliver its completion interrupt.
-2. Add an IOP interrupt context for SPU2/DMA/vblank and route it to the registered intrman
-   handlers.
+1. Route the mixed PCM to SDL3 audio and add an `--no-audio` fallback.
+2. Add a real IOP interrupt context for SPU2/DMA/vblank (the handlers currently run as threads).
 3. Finish the title→menu investigation: with SPU2 working, re-check whether the EE loader thread
    advances to `MENU.MGF`; otherwise pursue VU1/IPU (both still placeholders).
 4. Grow the kernel HLE from the remaining unresolved imports, keeping the public function numbering

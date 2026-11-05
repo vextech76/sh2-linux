@@ -25,10 +25,11 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-33 | IOP: HLE trampoline + core kernel handlers | done | | loadcore/intrman/sysmem/sif/thbase/timrman/thsemap/vblank |
 | LAN-34 | IOP: scheduler, blocking, vblank wakeups | done | | per-thread CPU + virtual clock; 31 tests |
 | LAN-35 | IOP: timer/alarm callbacks (guest threads) | done | | thbase SetAlarm + timrman handlers |
-| LAN-36 | IOP: SPU2 register model + voice mixing + DMA | todo | | start from the measured block in docs/IOP.md |
+| LAN-36 | IOP: SPU2 registers, voices, ADPCM, DMA | done | | tests: register/playback/ENDX/IRQ/transfer |
 | LAN-37 | IOP: SIF RPC bridge to real sound modules | done | | 1,970 calls, 0 failures in a 2,100-frame run |
-| LAN-38 | IOP: interrupt context for SPU2/DMA/vblank | todo | | intrman handlers on a real IOP IRQ path |
-| LAN-39 | Title→menu blocker with real sound | in_progress | | main thread terminates; no MENU.MGF read yet |
+| LAN-38 | IOP: true interrupt vector for SPU2/DMA/vblank | todo | | handlers currently run as guest callbacks |
+| LAN-39 | Title→menu blocker with real sound | in_progress | | EE loader waits on semaphores after Start |
+| LAN-40 | Audio: SDL3 output for SPU2 PCM | todo | | mixer peak is 0 at the title (no voice keyed on) |
 | LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
 | LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |
 | LAN-25 | Follow guest continuations in recompiled calls | done | | found by reaching the title screen |
