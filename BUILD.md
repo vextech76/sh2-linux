@@ -79,8 +79,8 @@ build/release/src/lantern-iop --extracted ~/.local/share/lantern/extracted/SLUS-
 ```
 
 Loads the game's own `.IRX` modules on the R3000A, resolves inter-module imports, and runs an
-initialiser (plus the thread bodies it starts). Findings and the remaining kernel surface are in
-`docs/IOP.md`. The probe is read-only and never writes game-derived data.
+initialiser and every thread it starts under the priority scheduler. Findings and the remaining
+kernel surface are in `docs/IOP.md`. The probe is read-only and never writes game-derived data.
 
 ## 9. Boot (headless, development)
 

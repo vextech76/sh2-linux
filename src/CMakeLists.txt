@@ -37,7 +37,7 @@ target_link_libraries(lantern-recomp PRIVATE lantern_recomp lantern_iso lantern_
 add_library(lantern_gs STATIC gs/gs_memory.cpp gs/gs.cpp gs/rasterizer.cpp)
 target_link_libraries(lantern_gs PUBLIC lantern_core PRIVATE lantern_warnings)
 # --- iop: R3000A core (IOP CPU) ---
-add_library(lantern_iop STATIC iop/r3000.cpp iop/iop_interp.cpp iop/irx.cpp iop/hle.cpp)
+add_library(lantern_iop STATIC iop/r3000.cpp iop/iop_interp.cpp iop/irx.cpp iop/hle.cpp iop/iop_threads.cpp)
 target_link_libraries(lantern_iop PUBLIC lantern_core lantern_ee PRIVATE lantern_warnings)
 add_executable(lantern-iop iop/iop_main.cpp)
 target_link_libraries(lantern-iop PRIVATE lantern_iop lantern_warnings)

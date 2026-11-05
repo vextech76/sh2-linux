@@ -23,9 +23,10 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-31 | IOP: R3000A decoder + interpreter (load delay) | done | | 30 tests; GNU-verified encodings |
 | LAN-32 | IOP: IRX loader (ELF, relocations, imports) + probe | done | | 11 modules load; see docs/IOP.md |
 | LAN-33 | IOP: HLE trampoline + core kernel handlers | done | | loadcore/intrman/sysmem/sif/thbase/timrman/thsemap/vblank |
-| LAN-34 | IOP: scheduler, blocking, timer/vblank interrupts | todo | | replaces the probe's run-once thread shim |
-| LAN-35 | IOP: SPU2 register model + voice mixing | todo | | start from the measured block in docs/IOP.md |
-| LAN-36 | IOP: DMA controller + SIF RPC bridge to the EE side | todo | | wire to existing src/iop/sif_hle.cpp |
+| LAN-34 | IOP: scheduler, blocking, vblank wakeups | done | | per-thread CPU + virtual clock; 31 tests |
+| LAN-35 | IOP: timer callbacks + interrupt delivery | todo | | fire timrman handlers; SPU2/DMA interrupt context |
+| LAN-36 | IOP: SPU2 register model + voice mixing | todo | | start from the measured block in docs/IOP.md |
+| LAN-37 | IOP: DMA controller + SIF RPC bridge to the EE side | todo | | wire to existing src/iop/sif_hle.cpp |
 | LAN-28 | padman command-word dispatch | done | | was reopening the pad 326x |
 | LAN-29 | Sound driver "ready" placeholder (no audio) | done | | insufficient to unblock the title |
 | LAN-25 | Follow guest continuations in recompiled calls | done | | found by reaching the title screen |

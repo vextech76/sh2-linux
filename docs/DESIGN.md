@@ -396,8 +396,20 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
   SPU2 and SIF/RPC, and starts a priority-29 worker that performs real SPU2 sample work. The
   measured register surface is in `docs/IOP.md`.
 
-Not yet: an IOP scheduler and interrupt delivery, the SPU2 register/voice model, and the SIF DMA
-path into the existing EE-side SIF bridge. Those are LAN-34..LAN-36.
+### 9.3 IOP scheduler ✅
+
+- `iop/iop_threads.*`: priority scheduler over complete per-thread `IopCpu` states, with blocking
+  `SleepThread`/`WaitSema`/`DelayThread`/vblank waits, a virtual 36.864 MHz clock, a 4096-instruction
+  quantum and stable thread storage (handlers may create threads mid-step).
+- `lantern-iop` now runs the module initialiser and every started thread concurrently. MCSERV's
+  wait on semaphore 0 is reported as a deadlock, which is the truthful result without an EE SIF
+  command; SOUNDCD runs its full nine-thread set (finished, sleeping, vblank, running, ready and
+  dormant threads at once).
+- Unit tests cover delays, priorities, semaphore hand-off, vblank wakeups, traps and dormant-thread
+  deadlock.
+
+Not yet: hardware-timer callbacks and interrupt delivery, the SPU2 register/voice model, and the
+SIF DMA path into the existing EE-side SIF bridge. Those are LAN-35..LAN-37.
 
 ## 9. Known limitations / risks
 

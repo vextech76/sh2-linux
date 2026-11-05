@@ -22,6 +22,7 @@
 
 #include "iop/hle.h"
 #include "iop/iop_interp.h"
+#include "iop/iop_threads.h"
 #include "iop/irx.h"
 
 namespace fs = std::filesystem;
@@ -236,28 +237,6 @@ std::string format_kprintf(IopMemory& mem, IopCpu& cpu, uint32_t fmt_addr) {
   return out;
 }
 
-// Diagnostic thread table: CreateThread records the caller's iop_thread_t, StartThread marks it
-// runnable, and the probe runs each body once after the initialiser returns. This is not a
-// scheduler yet; it exists to reach the thread bodies and report what they import.
-struct ThreadExit {};
-
-struct FakeThread {
-  uint32_t id = 0, entry = 0, arg = 0, stack = 0, stack_size = 0, priority = 0;
-  bool started = false, ran = false;
-};
-
-struct ThreadTable {
-  std::vector<FakeThread> threads;
-  uint32_t next_id = 1;
-  uint32_t current = 0;  // 0 = the module initialiser
-};
-
-FakeThread* find_thread(ThreadTable& table, uint32_t id) {
-  for (auto& t : table.threads)
-    if (t.id == id) return &t;
-  return nullptr;
-}
-
 // Hardware timer allocation (timrman). The registry and register values are real; the counters do
 // not advance yet, because that needs the timer interrupt model.
 struct TimerState {
@@ -296,7 +275,8 @@ struct SemaTable {
   Sema* get(uint32_t id) { return id < semas.size() && semas[id].used ? &semas[id] : nullptr; }
 };
 
-void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, TimerTable& timers, SemaTable& semas) {
+void install_kernel_handlers(IopHle& hle, Heap& heap, IopScheduler& sched, TimerTable& timers, SemaTable& semas,
+                             uint32_t& module_gp) {
   auto ret0 = [](IopCpu& cpu, IopMemory&) { cpu.gpr[2] = 0; };
 
   // intrman (ps2sdk iop/system/intrman): 17 = CpuSuspendIntr, 18 = CpuResumeIntr.
@@ -443,8 +423,8 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
   hle.add({"sifcmd", 0x0101}, 29, [](IopCpu& cpu, IopMemory&) { cpu.gpr[2] = 1; });
 
   // thsemap: 4 = CreateSema, 5 = DeleteSema, 6/7 = SignalSema, 8 = WaitSema, 9 = PollSema,
-  // 11/12 = ReferSemaStatus. WaitSema does not block in the probe: a would-block wait is logged
-  // and treated as acquired, which is enough to reach the next dependency but is not scheduling.
+  // 11/12 = ReferSemaStatus. SignalSema hands a token directly to a waiter instead of incrementing
+  // and then waking, so the resumed WaitSema does not consume a second count.
   hle.add({"thsemap", 0x0101}, 4, [&semas](IopCpu& cpu, IopMemory& m) {
     const uint32_t p = cpu.gpr[4];
     if (!p || p + 16 > IopMemory::kRamSize) {
@@ -464,22 +444,26 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
     if (auto* s = semas.get(cpu.gpr[4])) s->used = false;
     cpu.gpr[2] = 0;
   });
-  auto signal = [&semas](IopCpu& cpu, IopMemory&) {
-    if (auto* s = semas.get(cpu.gpr[4]); s && s->current < s->max) ++s->current;
+  auto signal = [&semas, &sched](IopCpu& cpu, IopMemory&) {
+    const uint32_t id = cpu.gpr[4];
+    if (!sched.wake_one(ThreadWaitKind::Sema, id)) {
+      if (auto* s = semas.get(id); s && s->current < s->max) ++s->current;
+    }
     cpu.gpr[2] = 0;
   };
   hle.add({"thsemap", 0x0101}, 6, signal);
   hle.add({"thsemap", 0x0101}, 7, signal);
-  hle.add({"thsemap", 0x0101}, 8, [&semas](IopCpu& cpu, IopMemory&) {
-    if (auto* s = semas.get(cpu.gpr[4])) {
-      if (s->current > 0)
-        --s->current;
-      else {
-        ++s->waits;
-        std::fprintf(stderr, "[iop] WaitSema(%u) would block (probe continues)\n", cpu.gpr[4]);
-      }
+  hle.add({"thsemap", 0x0101}, 8, [&semas, &sched](IopCpu& cpu, IopMemory&) {
+    const uint32_t id = cpu.gpr[4];
+    auto* s = semas.get(id);
+    if (s && s->current > 0) {
+      --s->current;
+      cpu.gpr[2] = 0;
+      return;
     }
+    if (s) ++s->waits;
     cpu.gpr[2] = 0;
+    sched.block_current({ThreadWaitKind::Sema, 0, id});
   });
   hle.add({"thsemap", 0x0101}, 9, [&semas](IopCpu& cpu, IopMemory&) {
     auto* s = semas.get(cpu.gpr[4]);
@@ -490,7 +474,7 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
       cpu.gpr[2] = 0xFFFFFFFFu;  // busy
     }
   });
-  hle.add({"thsemap", 0x0101}, 11, [&semas](IopCpu& cpu, IopMemory& m) {
+  auto refer_sema = [&semas, &sched](IopCpu& cpu, IopMemory& m) {
     const uint32_t info = cpu.gpr[5];
     if (auto* s = semas.get(cpu.gpr[4]); s && info && info + 32 <= IopMemory::kRamSize) {
       m.write<uint32_t>(info + 0, s->attr);
@@ -498,30 +482,22 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
       m.write<uint32_t>(info + 8, static_cast<uint32_t>(s->initial));
       m.write<uint32_t>(info + 12, static_cast<uint32_t>(s->max));
       m.write<uint32_t>(info + 16, static_cast<uint32_t>(s->current));
-      m.write<uint32_t>(info + 20, s->waits);
+      m.write<uint32_t>(info + 20, sched.sleeping_on(ThreadWaitKind::Sema, cpu.gpr[4]));
       m.write<uint32_t>(info + 24, 0);
       m.write<uint32_t>(info + 28, 0);
     }
     cpu.gpr[2] = 0;
-  });
-  hle.add({"thsemap", 0x0101}, 12, [&semas](IopCpu& cpu, IopMemory& m) {
-    const uint32_t info = cpu.gpr[5];
-    if (auto* s = semas.get(cpu.gpr[4]); s && info && info + 32 <= IopMemory::kRamSize) {
-      m.write<uint32_t>(info + 0, s->attr);
-      m.write<uint32_t>(info + 4, s->option);
-      m.write<uint32_t>(info + 8, static_cast<uint32_t>(s->initial));
-      m.write<uint32_t>(info + 12, static_cast<uint32_t>(s->max));
-      m.write<uint32_t>(info + 16, static_cast<uint32_t>(s->current));
-      m.write<uint32_t>(info + 20, s->waits);
-      m.write<uint32_t>(info + 24, 0);
-      m.write<uint32_t>(info + 28, 0);
-    }
-    cpu.gpr[2] = 0;
-  });
+  };
+  hle.add({"thsemap", 0x0101}, 11, refer_sema);
+  hle.add({"thsemap", 0x0101}, 12, refer_sema);
 
-  // vblank: 4..7 = WaitVblankStart/End/WaitVblank/WaitNonVblank. There is no vblank clock in the
-  // probe yet, so the waits complete immediately; 8/9 register/release handlers.
-  for (uint16_t fn = 4; fn <= 7; ++fn) hle.add({"vblank", 0x0101}, fn, ret0);
+  // vblank: 4..7 = WaitVblankStart/End/WaitVblank/WaitNonVblank. The scheduler owns the virtual
+  // vblank clock and wakes every waiter at the next frame; 8/9 register/release handlers.
+  for (uint16_t fn = 4; fn <= 7; ++fn)
+    hle.add({"vblank", 0x0101}, fn, [&sched](IopCpu& cpu, IopMemory&) {
+      cpu.gpr[2] = 0;
+      sched.block_current({ThreadWaitKind::Vblank, 0, 0});
+    });
   hle.add({"vblank", 0x0101}, 8, ret0);
   hle.add({"vblank", 0x0101}, 9, ret0);
 
@@ -605,74 +581,133 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
     cpu.gpr[2] = 0;
   });
 
-  // thbase: 4 = CreateThread, 5 = DeleteThread, 6 = StartThread, 8/9 = ExitThread,
-  // 14/15 = ChangeThreadPriority, 18/19 = ReleaseWaitThread, 20 = GetThreadId,
-  // 22/23 = ReferThreadStatus, 24 = SleepThread, 33 = DelayThread.
-  hle.add({"thbase", 0x0101}, 4, [&heap, &threads](IopCpu& cpu, IopMemory& m) {
+  // thbase: 4 = CreateThread, 5 = DeleteThread, 6/7 = StartThread(Args), 8/9 = ExitThread,
+  // 14/15 = ChangeThreadPriority, 16/17 = RotateThreadReadyQueue, 18/19 = ReleaseWaitThread,
+  // 20 = GetThreadId, 22/23 = ReferThreadStatus, 24 = SleepThread, 25/26 = WakeupThread,
+  // 27/28 = CancelWakeupThread, 33 = DelayThread, 34 = GetSystemTime.
+  hle.add({"thbase", 0x0101}, 4, [&heap, &sched, &module_gp](IopCpu& cpu, IopMemory& m) {
     const uint32_t p = cpu.gpr[4];
     if (!p || p + 20 > IopMemory::kRamSize) {
       cpu.gpr[2] = 0xFFFFFFFFu;
       return;
     }
-    FakeThread t;
-    t.entry = m.read<uint32_t>(p + 8);
-    t.stack_size = m.read<uint32_t>(p + 12);
-    t.priority = m.read<uint32_t>(p + 16);
-    if (t.stack_size < 0x400) t.stack_size = 0x400;
-    t.stack = heap.alloc(t.stack_size + 16);
-    if (!t.entry || !t.stack) {
+    const uint32_t entry = m.read<uint32_t>(p + 8);
+    uint32_t stack_size = m.read<uint32_t>(p + 12);
+    const uint32_t priority = m.read<uint32_t>(p + 16);
+    if (stack_size < 0x400) stack_size = 0x400;
+    const uint32_t stack = heap.alloc(stack_size + 16);
+    if (!entry || !stack) {
       cpu.gpr[2] = 0xFFFFFFFFu;
       return;
     }
-    t.id = threads.next_id++;
-    cpu.gpr[2] = t.id;
-    std::fprintf(stderr, "[iop] CreateThread id=%u entry=0x%05x stack=0x%05x size=0x%x prio=%u\n", t.id, t.entry,
-                 t.stack, t.stack_size, t.priority);
-    threads.threads.push_back(t);
+    const uint32_t id = sched.create_thread(entry, 0, static_cast<int>(priority), stack, stack_size, module_gp);
+    cpu.gpr[2] = id;
+    std::fprintf(stderr, "[iop] CreateThread id=%u entry=0x%05x stack=0x%05x size=0x%x prio=%u\n", id, entry, stack,
+                 stack_size, priority);
   });
-  hle.add({"thbase", 0x0101}, 5, [&threads](IopCpu& cpu, IopMemory&) {
-    if (FakeThread* t = find_thread(threads, cpu.gpr[4])) t->started = false;
+  hle.add({"thbase", 0x0101}, 5, [&sched](IopCpu& cpu, IopMemory&) {
     cpu.gpr[2] = 0;
+    if (!sched.delete_thread(cpu.gpr[4])) cpu.gpr[2] = 0xFFFFFFFFu;
   });
-  hle.add({"thbase", 0x0101}, 6, [&threads](IopCpu& cpu, IopMemory&) {
-    if (FakeThread* t = find_thread(threads, cpu.gpr[4])) {
-      t->arg = cpu.gpr[5];
-      t->started = true;
-      std::fprintf(stderr, "[iop] StartThread id=%u arg=0x%05x\n", t->id, t->arg);
-    } else {
-      std::fprintf(stderr, "[iop] StartThread unknown id=%u\n", cpu.gpr[4]);
+  hle.add({"thbase", 0x0101}, 6, [&sched](IopCpu& cpu, IopMemory&) {
+    const bool ok = sched.start_thread(cpu.gpr[4], cpu.gpr[5]);
+    if (ok) std::fprintf(stderr, "[iop] StartThread id=%u arg=0x%05x\n", cpu.gpr[4], cpu.gpr[5]);
+    cpu.gpr[2] = ok ? 0 : 0xFFFFFFFFu;
+  });
+  hle.add({"thbase", 0x0101}, 7, [&sched](IopCpu& cpu, IopMemory&) {
+    const bool ok = sched.start_thread(cpu.gpr[4], cpu.gpr[6]);
+    cpu.gpr[2] = ok ? 0 : 0xFFFFFFFFu;
+  });
+  hle.add({"thbase", 0x0101}, 8, [&sched](IopCpu&, IopMemory&) { sched.exit_current(); });
+  hle.add({"thbase", 0x0101}, 9, [&sched](IopCpu&, IopMemory&) { sched.exit_current(); });
+  auto change_priority = [&sched](IopCpu& cpu, IopMemory&) {
+    sched.set_priority(cpu.gpr[4], static_cast<int>(cpu.gpr[5]));
+    cpu.gpr[2] = 0;
+  };
+  hle.add({"thbase", 0x0101}, 14, change_priority);
+  hle.add({"thbase", 0x0101}, 15, change_priority);
+  hle.add({"thbase", 0x0101}, 16, [&sched](IopCpu& cpu, IopMemory&) {
+    cpu.gpr[2] = 0;
+    sched.yield_current();
+  });
+  hle.add({"thbase", 0x0101}, 17, [&sched](IopCpu& cpu, IopMemory&) {
+    cpu.gpr[2] = 0;
+    sched.yield_current();
+  });
+  auto release_wait = [&sched](IopCpu& cpu, IopMemory&) {
+    sched.wake_thread(cpu.gpr[4]);
+    cpu.gpr[2] = 0;
+  };
+  hle.add({"thbase", 0x0101}, 18, release_wait);
+  hle.add({"thbase", 0x0101}, 19, release_wait);
+  hle.add({"thbase", 0x0101}, 20,
+          [&sched](IopCpu& cpu, IopMemory&) { cpu.gpr[2] = static_cast<uint32_t>(sched.current_id()); });
+  auto refer = [&sched](IopCpu& cpu, IopMemory& m) {
+    const uint32_t info = cpu.gpr[5];
+    IopThread* t = sched.thread(cpu.gpr[4]);
+    if (!t || !info || info + 52 > IopMemory::kRamSize) {
+      cpu.gpr[2] = 0xFFFFFFFFu;
+      return;
+    }
+    for (unsigned i = 0; i < 13; ++i) m.write<uint32_t>(info + i * 4, 0);
+    uint32_t status = 0x10, wait_type = 0;
+    switch (t->state) {
+      case ThreadState::Running: status = 0x01; break;
+      case ThreadState::Ready: status = 0x02; break;
+      case ThreadState::Delay:
+        status = 0x04;
+        wait_type = 2;
+        break;
+      case ThreadState::Sleep:
+        status = 0x04;
+        wait_type = 1;
+        break;
+      case ThreadState::Sema:
+        status = 0x04;
+        wait_type = 3;
+        break;
+      case ThreadState::Vblank:
+        status = 0x04;
+        wait_type = 4;
+        break;
+      case ThreadState::Dormant:
+      case ThreadState::Dead: status = 0x10; break;
+    }
+    m.write<uint32_t>(info + 8, status);
+    m.write<uint32_t>(info + 12, t->entry);
+    m.write<uint32_t>(info + 16, t->stack_base);
+    m.write<uint32_t>(info + 20, t->stack_size);
+    m.write<uint32_t>(info + 24, t->gp);
+    m.write<uint32_t>(info + 28, static_cast<uint32_t>(t->priority));
+    m.write<uint32_t>(info + 32, static_cast<uint32_t>(t->priority));
+    m.write<uint32_t>(info + 36, wait_type);
+    m.write<uint32_t>(info + 40, t->wait_object);
+    cpu.gpr[2] = 0;
+  };
+  hle.add({"thbase", 0x0101}, 22, refer);
+  hle.add({"thbase", 0x0101}, 23, refer);
+  hle.add({"thbase", 0x0101}, 24, [&sched](IopCpu& cpu, IopMemory&) {
+    cpu.gpr[2] = 0;
+    sched.block_current({ThreadWaitKind::Sleep, 0, 0});
+  });
+  hle.add({"thbase", 0x0101}, 25, release_wait);
+  hle.add({"thbase", 0x0101}, 26, release_wait);
+  hle.add({"thbase", 0x0101}, 27, ret0);
+  hle.add({"thbase", 0x0101}, 28, ret0);
+  hle.add({"thbase", 0x0101}, 33, [&sched](IopCpu& cpu, IopMemory&) {
+    cpu.gpr[2] = 0;
+    sched.block_current({ThreadWaitKind::Delay, sched.now_us() + cpu.gpr[4], 0});
+  });
+  hle.add({"thbase", 0x0101}, 34, [&sched](IopCpu& cpu, IopMemory& m) {
+    const uint32_t p = cpu.gpr[4];
+    const uint64_t clocks = sched.now_us() * 36864 / 1000;
+    if (p && p + 8 <= IopMemory::kRamSize) {
+      m.write<uint32_t>(p, static_cast<uint32_t>(clocks));
+      m.write<uint32_t>(p + 4, static_cast<uint32_t>(clocks >> 32));
     }
     cpu.gpr[2] = 0;
   });
-  hle.add({"thbase", 0x0101}, 7, [&threads](IopCpu& cpu, IopMemory&) {
-    if (FakeThread* t = find_thread(threads, cpu.gpr[4])) {
-      t->arg = cpu.gpr[6];
-      t->started = true;
-    }
-    cpu.gpr[2] = 0;
-  });
-  auto exit_thread = [](IopCpu&, IopMemory&) { throw ThreadExit{}; };
-  hle.add({"thbase", 0x0101}, 8, exit_thread);
-  hle.add({"thbase", 0x0101}, 9, exit_thread);
-  hle.add({"thbase", 0x0101}, 14, ret0);
-  hle.add({"thbase", 0x0101}, 15, ret0);
-  hle.add({"thbase", 0x0101}, 18, ret0);
-  hle.add({"thbase", 0x0101}, 19, ret0);
-  hle.add({"thbase", 0x0101}, 20, [&threads](IopCpu& cpu, IopMemory&) { cpu.gpr[2] = threads.current; });
-  hle.add({"thbase", 0x0101}, 22, [](IopCpu& cpu, IopMemory& m) {
-    const uint32_t info = cpu.gpr[5];
-    if (info && info + 52 <= IopMemory::kRamSize)
-      for (unsigned i = 0; i < 13; ++i) m.write<uint32_t>(info + i * 4, 0);
-    cpu.gpr[2] = 0;
-  });
-  hle.add({"thbase", 0x0101}, 23, [](IopCpu& cpu, IopMemory& m) {
-    const uint32_t info = cpu.gpr[5];
-    if (info && info + 52 <= IopMemory::kRamSize)
-      for (unsigned i = 0; i < 13; ++i) m.write<uint32_t>(info + i * 4, 0);
-    cpu.gpr[2] = 0;
-  });
-  hle.add({"thbase", 0x0101}, 24, ret0);
-  hle.add({"thbase", 0x0101}, 33, ret0);
+
   // Clock conversion: the IOP time base is 36.864 MHz.
   hle.add({"thbase", 0x0101}, 39, [](IopCpu& cpu, IopMemory& m) {
     const uint32_t usec = cpu.gpr[4];
@@ -699,14 +734,6 @@ void install_kernel_handlers(IopHle& hle, Heap& heap, ThreadTable& threads, Time
   hle.add({"thbase", 0x0101}, 36, ret0);
   hle.add({"thbase", 0x0101}, 37, ret0);
   hle.add({"thbase", 0x0101}, 38, ret0);
-  hle.add({"thbase", 0x0101}, 34, [](IopCpu& cpu, IopMemory& m) {
-    const uint32_t p = cpu.gpr[4];
-    if (p && p + 8 <= IopMemory::kRamSize) {
-      m.write<uint32_t>(p, 0);
-      m.write<uint32_t>(p + 4, 0);
-    }
-    cpu.gpr[2] = 0;
-  });
   hle.add({"thbase", 0x0101}, 41, ret0);
 
   // stdio: 4 = printf (the modules use it for progress messages).
@@ -857,128 +884,94 @@ void print_module(const Placed& p) {
   }
 }
 
-struct CallSite {
-  uint32_t pc = 0;
-  uint32_t target = 0;
-};
-
-struct RunOutcome {
-  bool exited = false;  // the thread called ExitThread/ExitDeleteThread
-  bool stopped = false;
-  std::string failure;
-  uint64_t steps = 0;
-};
-
-RunOutcome run_one(IopCpu& cpu, IopMemory& mem, IopHle& hle, const Options& opt,
-                   const std::map<uint32_t, std::string>& unresolved, const char* label) {
-  constexpr uint32_t kStop = 0xFFFFFFF0;
-  Interpreter interp;
-  interp.set_syscall_hook([&hle](IopCpu& c, IopMemory&, uint32_t pc) {
-    if (hle.dispatch(c, pc)) return;
-    throw Trap(pc, "IOP syscall (no kernel syscall handler)");
-  });
-
-  struct Traced {
-    uint32_t pc, word;
-    std::string text;
-  };
-  std::vector<Traced> ring;
-  ring.reserve(opt.trace + 1);
-  std::optional<CallSite> last_call;
-  RunOutcome out;
-  std::printf("  %s entry 0x%05x\n", label, cpu.pc);
-  while (cpu.pc != kStop) {
-    if (out.steps >= opt.steps) {
-      out.failure = "step budget exhausted";
-      break;
-    }
-    const uint32_t pc = cpu.pc;
-    uint32_t word = 0;
-    std::string text;
-    try {
-      word = mem.read<uint32_t>(pc);
-      const Insn in = decode(word, pc);
-      text = disassemble(in);
-      if (in.op == Op::JAL) last_call = CallSite{pc, in.target};
-      if (in.op == Op::JALR) last_call = CallSite{pc, cpu.at(in.rs)};
-      ring.push_back({pc, word, text});
-      if (ring.size() > opt.trace) ring.erase(ring.begin());
-      interp.step(cpu, mem);
-    } catch (const ThreadExit&) {
-      out.exited = true;
-      break;
-    } catch (const Trap& t) {
-      out.failure = t.what();
-      ring.push_back({pc, word, text.empty() ? "(invalid)" : text});
-      if (ring.size() > opt.trace) ring.erase(ring.begin());
-      auto it = unresolved.find(pc);
-      if (it != unresolved.end()) out.failure = std::format("unimplemented import {}", it->second);
-      if (last_call && last_call->target == pc) out.failure += std::format(" (called from 0x{:05x})", last_call->pc);
-      break;
-    }
-    ++out.steps;
+const char* state_name(ThreadState state) {
+  switch (state) {
+    case ThreadState::Dormant: return "dormant";
+    case ThreadState::Ready: return "ready";
+    case ThreadState::Running: return "running";
+    case ThreadState::Delay: return "delay";
+    case ThreadState::Sleep: return "sleep";
+    case ThreadState::Sema: return "sema";
+    case ThreadState::Vblank: return "vblank";
+    case ThreadState::Dead: return "dead";
   }
-  out.stopped = cpu.pc == kStop;
-  if (out.failure.empty()) {
-    std::printf("    %s after %llu instructions (v0=0x%08x)\n", out.exited ? "exited" : "returned",
-                static_cast<unsigned long long>(out.steps), cpu.gpr[2]);
-    return out;
-  }
-  std::printf("    stopped after %llu instructions: %s\n", static_cast<unsigned long long>(out.steps),
-              out.failure.c_str());
-  std::printf("    last instructions:\n");
-  for (const auto& t : ring) std::printf("      0x%05x  %08x  %s\n", t.pc, t.word, t.text.c_str());
-  std::printf("    registers: a0=%08x a1=%08x a2=%08x a3=%08x v0=%08x sp=%08x ra=%08x\n", cpu.gpr[4], cpu.gpr[5],
-              cpu.gpr[6], cpu.gpr[7], cpu.gpr[2], cpu.gpr[29], cpu.gpr[31]);
-  return out;
+  return "?";
 }
 
-void probe(Placed& target, IopMemory& mem, IopHle& hle, ThreadTable& threads, const Options& opt) {
+void probe(Placed& target, IopMemory& mem, IopScheduler& sched, const Options& opt) {
   auto& m = target.module;
   if (!m.has_entry()) {
     std::printf("\n%s has no initialiser\n", target.label.c_str());
     return;
   }
 
-  // Make every unresolved import trap where it is called, so the report names it exactly.
+  // Unresolved imports become `break`, so the trap lands on the stub the module called.
   std::map<uint32_t, std::string> unresolved;
   for (const auto& u : m.unresolved) {
     unresolved[u.stub] = std::format("{}.{}", format_library(u.library), u.function);
-    mem.write<uint32_t>(u.stub, 0x0000000D);  // break
+    mem.write<uint32_t>(u.stub, 0x0000000D);
   }
 
-  IopCpu cpu;
-  cpu.pc = m.entry;
-  cpu.gpr[28] = m.gp;
-  cpu.gpr[29] = 0x001FF000;  // stack below the top of IOP RAM
-  cpu.gpr[31] = 0xFFFFFFF0;  // sentinel: returning here ends the run
-  // loadcore calls the entry point with (argc, argv, module_ptr, module_info).
-  cpu.gpr[4] = 0;
-  cpu.gpr[5] = 0;
-  cpu.gpr[6] = m.base;  // cur_module_addr points at the image; the probe passes the base itself
-  cpu.gpr[7] = 0;
+  struct Traced {
+    uint32_t thread, pc, word;
+  };
+  std::vector<Traced> ring;
+  ring.reserve(opt.trace + 1);
+  sched.set_observer([&](const IopThread& t, uint32_t pc, uint32_t word) {
+    ring.push_back({t.id, pc, word});
+    if (ring.size() > opt.trace) ring.erase(ring.begin());
+  });
+
+  // The module initialiser runs as the first thread. loadcore calls it with
+  // (argc=0, argv=0, module_ptr, module_info=0).
+  const uint32_t main_id = sched.create_thread(m.entry, 0, 64, 0x001F1000, 0x0000E000, m.gp);
+  IopThread* mt = sched.thread(main_id);
+  mt->cpu.gpr[5] = 0;
+  mt->cpu.gpr[6] = m.base;
+  mt->cpu.gpr[7] = 0;
+  sched.start_thread(main_id, 0);
 
   std::printf("\nprobe %s: %llu step budget\n", target.label.c_str(), static_cast<unsigned long long>(opt.steps));
-  RunOutcome main = run_one(cpu, mem, hle, opt, unresolved, "initialiser");
-  if (!main.failure.empty()) return;
+  const SchedulerStats stats = sched.run(opt.steps);
 
-  // Run the bodies that StartThread made runnable. The vector may grow while they run.
-  for (size_t i = 0; i < threads.threads.size(); ++i) {
-    FakeThread& t = threads.threads[i];
-    if (!t.started || t.ran) continue;
-    t.ran = true;
-    threads.current = t.id;
-    IopCpu tcpu;
-    tcpu.pc = t.entry;
-    tcpu.gpr[28] = m.gp;
-    tcpu.gpr[29] = (t.stack + t.stack_size) & ~15u;
-    tcpu.gpr[31] = 0xFFFFFFF0;
-    tcpu.gpr[4] = t.arg;
-    const std::string label = std::format("thread {} (priority {})", t.id, t.priority);
-    RunOutcome out = run_one(tcpu, mem, hle, opt, unresolved, label.c_str());
-    if (!out.failure.empty()) break;
+  std::printf("  %llu steps, %llu cycles (%.1f ms), %u switches%s\n", static_cast<unsigned long long>(stats.steps),
+              static_cast<unsigned long long>(stats.cycles), static_cast<double>(stats.cycles) / 36864.0,
+              stats.switches,
+              stats.trapped            ? ", trapped"
+              : stats.deadlock         ? ", deadlock"
+              : stats.budget_exhausted ? ", budget exhausted"
+                                       : "");
+  for (const auto& t : sched.threads()) {
+    std::printf("  thread %u prio %d: %-8s %llu instructions", t.id, t.priority, state_name(t.state),
+                static_cast<unsigned long long>(t.steps));
+    if (t.state == ThreadState::Sema || t.state == ThreadState::Vblank) std::printf(" (object %u)", t.wait_object);
+    if (!t.trap.empty()) std::printf(" trap 0x%05x: %s", t.trap_pc, t.trap.c_str());
+    std::printf("\n");
   }
-  threads.current = 0;
+
+  const bool show_trace = stats.trapped || stats.budget_exhausted;
+  if (stats.trapped) {
+    std::printf("  failure in thread %u at 0x%05x: %s\n", stats.trap_thread, stats.trap_pc, stats.trap.c_str());
+    auto it = unresolved.find(stats.trap_pc);
+    if (it != unresolved.end()) std::printf("  unimplemented import %s\n", it->second.c_str());
+    if (IopThread* ft = sched.thread(stats.trap_thread))
+      std::printf("  registers: a0=%08x a1=%08x a2=%08x a3=%08x v0=%08x sp=%08x ra=%08x\n", ft->cpu.gpr[4],
+                  ft->cpu.gpr[5], ft->cpu.gpr[6], ft->cpu.gpr[7], ft->cpu.gpr[2], ft->cpu.gpr[29], ft->cpu.gpr[31]);
+  }
+  if (stats.deadlock) {
+    std::printf("  deadlock: no ready thread and no timed wake-up\n");
+    for (const auto& t : sched.threads())
+      if (t.state != ThreadState::Dead && t.state != ThreadState::Dormant)
+        std::printf("    thread %u is %s (sema/vblank object %u)\n", t.id, state_name(t.state), t.wait_object);
+  }
+  if (show_trace) {
+    std::printf("  last instructions:\n");
+    for (const auto& tr : ring) {
+      const Insn in = decode(tr.word, tr.pc);
+      const std::string text = in.valid() ? disassemble(in) : "(invalid)";
+      std::printf("    [t%u] 0x%05x  %08x  %s\n", tr.thread, tr.pc, tr.word, text.c_str());
+    }
+  }
 }
 
 bool matches(const std::string& haystack, const std::string& needle) {
@@ -1028,11 +1021,17 @@ int main(int argc, char** argv) {
   mem.set_mmio([&mmio](uint32_t a, void* o, unsigned n) { mmio.on_read(a, o, n); },
                [&mmio](uint32_t a, const void* i, unsigned n) { mmio.on_write(a, i, n); });
   IopHle hle(mem);
+  Interpreter interp;
+  IopScheduler sched(mem, interp);
   Heap heap;
-  ThreadTable threads;
   TimerTable timers;
   SemaTable semas;
-  install_kernel_handlers(hle, heap, threads, timers, semas);
+  uint32_t module_gp = 0;
+  install_kernel_handlers(hle, heap, sched, timers, semas, module_gp);
+  interp.set_syscall_hook([&hle](IopCpu& c, IopMemory&, uint32_t pc) {
+    if (hle.dispatch(c, pc)) return;
+    throw Trap(pc, "IOP syscall (no kernel syscall handler)");
+  });
   auto sources = collect_sources(opt);
   if (sources.empty()) {
     std::fprintf(stderr, "no IOP modules found under %s\n", opt.extracted.string().c_str());
@@ -1076,7 +1075,8 @@ int main(int argc, char** argv) {
   uint32_t max_end = 0;
   for (const auto& p : loaded) max_end = std::max(max_end, p.module.end);
   heap.next = std::max(heap.next, (max_end + 15) & ~15u);
-  probe(*target, mem, hle, threads, opt);
+  module_gp = target->module.gp;
+  probe(*target, mem, sched, opt);
   if (opt.mmio || opt.inspect) mmio.print();
   return 0;
 }

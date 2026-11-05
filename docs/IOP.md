@@ -75,6 +75,20 @@ The interpreter's syscall hook calls `IopHle::dispatch`, which runs the host han
 same calling convention as a real IOP library. An unresolved import is replaced with `break` by the
 probe, so the trap names the exact library and function number.
 
+## Threads and virtual time
+
+`iop_threads.*` is a cooperative priority scheduler. Each `IopThread` owns a complete `IopCpu`
+state and a private stack; a handler blocks by throwing `ThreadSwitch` after the scheduler advances
+the thread past its trampoline `syscall`, so it resumes at `jr ra`. `SleepThread`, `WaitSema`,
+`DelayThread` and the vblank waits block; `SignalSema` hands a token directly to a waiter instead
+of incrementing and waking; `WakeupThread` releases a sleeping thread. Virtual time is the
+36.864 MHz IOP clock (one cycle per instruction), advanced to the next timed wake when every thread
+is blocked. `now_us`, `USec2SysClock` and `GetSystemTime` all use that clock. A 4096-instruction
+quantum rotates ready threads at the same priority.
+
+Still missing from this layer: hardware-timer callbacks do not fire, and no interrupt context is
+delivered. Those are the next step.
+
 ## Probe results
 
 `--inspect` currently loads **11 modules, 441 imported functions, 6085 `j`/`jal` targets**; after
@@ -82,25 +96,27 @@ inter-module resolution and the handlers below, **109 imported functions remain 
 remaining set is the kernel surface that still has to be implemented (sifman/sifcmd RPC data paths,
 cdvdman, ioman, secrman, sysclib, thevent, thsemap priorities, …).
 
-Initialisers and thread bodies reached on the interpreter:
+Initialisers and threads reached on the interpreter:
 
-| Module | Initialiser | Thread bodies |
-|---|---|---|
-| LIBSD 1.4 | returns | — |
-| MCMAN 2.23 | stops at `secrman.4` | — |
-| MCSERV 2.13 | returns | thread 1 returns |
-| PADMAN 4.2 | returns | threads 1 and 2 return |
-| SIO2MAN 2.4 | stops at `thevent.4` | — |
-| SD_CD 0.1 | returns | — |
-| SDSTR 2.5 | returns | — |
-| SOUNDCD 1.0 | returns | thread 1 returns after ~231k instructions; thread 2 starts and runs SPU2 code |
+| Module | Result |
+|---|---|
+| LIBSD 1.4 | initialiser returns |
+| MCMAN 2.23 | initialiser traps at `secrman.4` |
+| MCSERV 2.13 | initialiser returns; thread 2 blocks on semaphore 0 (waiting for an EE command, reported as a deadlock) |
+| PADMAN 4.2 | initialiser returns; threads 1 and 2 return |
+| SIO2MAN 2.4 | initialiser traps at `thevent.4` |
+| SD_CD 0.1 | initialiser returns |
+| SDSTR 2.5 | initialiser returns |
+| SOUNDCD 1.0 | initialiser returns; nine driver threads exist and the scheduler runs them concurrently |
 
-The Konami sound driver (`SOUNDCD`, module `kcet sd drv.`) is the important path: its initialiser
-creates a priority-47 thread, that thread sets up SPU2 (writes to `0x1F9000xx`, allocates a 32-bit
-timer, hooks `timrman.SetTimerHandler`, initialises SIF/RPC, waits a vblank, creates a
-priority-29 worker), and the worker reads SPU2 sample data through the driver's own tables. A
-1,000,000-instruction run stays inside that worker without trapping; it is doing real mixing work,
-not spinning on an unimplemented call.
+The Konami sound driver (`SOUNDCD`, module `kcet sd drv.`) is the important path. Its initialiser
+creates a priority-47 thread; that thread sets up SPU2 (writes to `0x1F9000xx`, allocates a 32-bit
+timer, hooks `timrman.SetTimerHandler`), initialises SIF/RPC, waits for a vblank and creates more
+workers. After a 1,000,000-instruction run the scheduler reports three threads finished, one
+sleeping, one waiting for a vblank, one running (the priority-47 mixing thread), one ready and
+three dormant. Nothing traps: the driver is doing its own work and waiting for vblank/SIF, not
+stuck on an unimplemented import. The 56 seconds of virtual time are mostly idle waiting; that is
+expected until the EE side sends RPC requests.
 
 Measured hardware surface from the same run (`--mmio`): the DMA registers (`0x1F8010F0`,
 `0x1F801014`, `0x1F801404/40C/414`, `0x1F801570`) and the SPU2 block. The SPU2 writes include the
@@ -113,28 +129,25 @@ registers the SPU2 model must implement first; the access log is the evidence, n
 
 Real behaviour in `lantern-iop`: IRX copying/relocation, import/export parsing and stub patching,
 entry-point calling convention, `loadcore` library registration (returns `KE_OK`), a bump
-`sysmem` allocator, semaphore counts, hardware-timer allocation and register state, the
-36.864 MHz `USec2SysClock` conversion, and the R3000A execution itself.
+`sysmem` allocator, the priority scheduler with blocking waits and a virtual clock, semaphore
+counts and hand-off, hardware-timer allocation/register state, vblank wakeups, the 36.864 MHz
+clock conversions, and the R3000A execution itself.
 
 Probe-only shims, marked here so they are not mistaken for final semantics:
 
-- Threads are recorded and each body is run once after the initialiser; there is no scheduler,
-  blocking or priority preemption.
-- `WaitSema` never blocks (a would-block wait is logged and treated as acquired).
+- Hardware-timer callbacks are stored but never fired; no IOP interrupt context is delivered.
 - SIF is reported already initialised; `sceSifSetDma` completes immediately and `sceSifRpcLoop`
-  returns instead of waiting for EE requests.
-- Vblank waits complete immediately; hardware timers keep state but never fire their handlers; no
-  IOP interrupts are delivered.
+  returns instead of waiting for EE requests. No data crosses between the CPUs yet.
 - Unmapped I/O reads return zero and writes are logged; the SPU2 and DMA registers have no
   behaviour yet.
+- `WaitVblankStart/End/WaitVblank/WaitNonVblank` all wake at the next frame.
 
 ## Next steps
 
-1. Replace the probe thread table with an IOP scheduler (ready/waiting/delay queues, priorities,
-   `SleepThread`/`DelayThread`/`WaitSema` blocking) and deliver timer, vblank and DMA interrupts.
-2. Model the IOP DMA controller and wire SIF DMA to the existing EE-side SIF path so RPC calls
-   actually cross between the CPUs; then `SOUNDCD`'s RPC server can receive the game's requests.
-3. Implement the measured SPU2 register block and voice mixing, then feed its output to the audio
+1. Fire hardware-timer callbacks and deliver SPU2/DMA interrupts in an interrupt context.
+2. Implement the measured SPU2 register block and voice mixing, then feed its output to the audio
    backend.
+3. Model the IOP DMA controller and wire SIF DMA to the existing EE-side SIF path so RPC calls
+   actually cross between the CPUs; then `SOUNDCD`'s RPC server can receive the game's requests.
 4. Grow the kernel HLE from the 109 unresolved imports, keeping the public function numbering
    (ps2sdk headers) as the interface reference.

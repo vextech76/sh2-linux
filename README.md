@@ -33,7 +33,7 @@ src/analysis   function discovery, syscalls, overlays, IOP modules, lantern-anal
 src/recomp     C++ emitter, runtime dispatcher, lantern-recomp
 src/ps2        HLE kernel, boot loader, DMAC/VIF1, GS bridge
 src/gs         GS registers, local memory, software rasterizer
-src/iop        R3000A core, IRX loader, HLE dispatch/monitor, SIF/CDVD/pad/mc services
+src/iop        R3000A core, IRX loader, HLE + scheduler, SIF/CDVD/pad/mc services
 src/app        CLI and main loop
 tests/         doctest unit tests + CTest smoke/GPU tests
 scripts/       check.sh (lint + build + tests gate)
