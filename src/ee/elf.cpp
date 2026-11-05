@@ -52,6 +52,9 @@ std::optional<ElfImage> ElfImage::parse(std::vector<uint8_t> bytes, std::string*
       s.addr = load_le32(p + 12);
       s.offset = load_le32(p + 16);
       s.size = load_le32(p + 20);
+      s.link = load_le32(p + 24);
+      s.info = load_le32(p + 28);
+      s.entsize = load_le32(p + 36);
       raw.emplace_back(load_le32(p), s);
     }
     const ElfSection* strtab = shstrndx < raw.size() ? &raw[shstrndx].second : nullptr;

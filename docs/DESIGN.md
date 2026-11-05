@@ -380,9 +380,24 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
 - Unit tests: golden encodings, load-delay behaviour (including the back-to-back case), delay slot
   plus `jal` link ordering, HI/LO arithmetic, traps, and the absence of EE-only instructions.
 
-Not yet: IRX loading (ELF + relocations) into IOP RAM, the IOP kernel/library HLE that modules
-import (thbase, intrman, sifman, libsd, …), SPU2, and the SIF DMA path into the IOP CPU. Those are
-the next Stage-9 steps (LAN-31..LAN-33).
+### 9.2 IRX loading, HLE dispatch and the module probe ✅
+
+- `iop/irx.*` loads PS2 IOP modules into the 2 MiB IOP RAM: `PT_LOAD` copy, `.bss` zeroing,
+  `R_MIPS_32/26/HI16/LO16` relocations, import/export table discovery, and patching of each import
+  stub with `j handler; nop`. Measurements from the shipped modules (all relocations against
+  symbol 0, `r_offset` already virtual, export entries relocated by `R_MIPS_32`, entry point 0
+  is a real initialiser) are recorded in `docs/IOP.md`.
+- `iop/hle.*` dispatches host handlers through a 12-byte trampoline slot (`syscall; jr ra; nop`),
+  so HLE functions use the normal IOP calling convention without inventing guest code.
+- `lantern-iop` loads every `.IRX` under the extracted directory, resolves inter-module imports
+  (LIBSD, sd_cd, sdstr, …), reports the remaining kernel surface, and runs module initialisers and
+  the thread bodies they start on the R3000A.
+- Result: the Konami sound driver (`SOUNDCD`) initialises, creates its priority-47 thread, sets up
+  SPU2 and SIF/RPC, and starts a priority-29 worker that performs real SPU2 sample work. The
+  measured register surface is in `docs/IOP.md`.
+
+Not yet: an IOP scheduler and interrupt delivery, the SPU2 register/voice model, and the SIF DMA
+path into the existing EE-side SIF bridge. Those are LAN-34..LAN-36.
 
 ## 9. Known limitations / risks
 

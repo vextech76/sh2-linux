@@ -25,6 +25,10 @@ struct ElfSection {
   uint32_t addr = 0;
   uint32_t offset = 0;
   uint32_t size = 0;
+  // Relocation sections: target section (info), symbol table (link), entry size.
+  uint32_t link = 0;
+  uint32_t info = 0;
+  uint32_t entsize = 0;
 };
 
 // 32-bit little-endian MIPS ELF (EE executables and IOP IRX modules). Read-only view over a

@@ -71,7 +71,18 @@ cmake -S ~/.local/share/lantern/recomp/SLUS-20228 -B ~/.local/share/lantern/reco
 cmake --build ~/.local/share/lantern/recomp/SLUS-20228/build   # -> liblantern_game.so (run with lantern-boot)
 ```
 
-## 8. Boot (headless, development)
+## 8. IOP modules (read-only probe)
+
+```sh
+build/release/src/lantern-iop --extracted ~/.local/share/lantern/extracted/SLUS-20228 --inspect
+build/release/src/lantern-iop --extracted ~/.local/share/lantern/extracted/SLUS-20228                              --module SOUNDCD --steps 400000 --mmio
+```
+
+Loads the game's own `.IRX` modules on the R3000A, resolves inter-module imports, and runs an
+initialiser (plus the thread bodies it starts). Findings and the remaining kernel surface are in
+`docs/IOP.md`. The probe is read-only and never writes game-derived data.
+
+## 9. Boot (headless, development)
 
 ```sh
 G=~/.local/share/lantern/recomp/SLUS-20228
