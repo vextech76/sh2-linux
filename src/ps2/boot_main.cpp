@@ -31,6 +31,7 @@
 #include "iop/services.h"
 #include "iop/sif_hle.h"
 #include "iso/iso9660.h"
+#include "platform/audio.h"
 #include "platform/sdl_platform.h"
 #include "ps2/boot.h"
 #include "ps2/hardware.h"
@@ -206,7 +207,8 @@ int main(int argc, char** argv) {
   double seconds = 20;
   bool trace = false;
   bool window = false;
-  bool sound_iop = true;
+  bool sound_iop = false;
+  bool audio_on = true;
   bool turbo = false;
   char mc_probe = 'A';
   std::string watch;  // debug: ADDR[:SIZE] to log guest accesses (hex)
@@ -233,8 +235,12 @@ int main(int argc, char** argv) {
       seconds = std::stod(argv[++i]);
     else if (a == "--trace")
       trace = true;
+    else if (a == "--sound-iop")
+      sound_iop = true;
     else if (a == "--no-sound-iop")
       sound_iop = false;
+    else if (a == "--no-audio")
+      audio_on = false;
     else if (a == "--swizzle-variant" && i + 1 < argc) {  // "T8" or "T8,T4"
       std::string spec = argv[++i];
       auto comma = spec.find(',');
@@ -274,7 +280,7 @@ int main(int argc, char** argv) {
           "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--window] "
           "[--dump-frames DIR "
           "[--dump-every N] [--dump-textures DIR] [--swizzle-variant N] [--turbo] [--frames N] "
-          "[--no-sound-iop]\n",
+          "[--sound-iop] [--no-audio]\n",
           stderr);
       return 2;
     }
@@ -391,16 +397,19 @@ int main(int argc, char** argv) {
   if (!dump_dir.empty()) fs::create_directories(dump_dir);
   if (!texture_dir.empty()) fs::create_directories(texture_dir);
   std::unique_ptr<iop::IopRuntime> iop_rt;
+  platform::Audio audio;
+  if (audio_on) audio.open();
   kernel.set_vblank_hook([&](uint64_t n) {
     if (iop_rt) {
       iop_rt->run(100000);  // keep the sound modules moving between EE frames
-      static std::vector<int16_t> audio(800 * 2);
-      iop_rt->mix_audio(audio.data(), 800);
+      static std::vector<int16_t> audio_buf(800 * 2);
+      iop_rt->mix_audio(audio_buf.data(), 800);
       g_audio_frames += 800;
-      for (int16_t sample : audio) {
+      for (int16_t sample : audio_buf) {
         const int a = sample < 0 ? -static_cast<int>(sample) : static_cast<int>(sample);
         if (a > g_audio_peak) g_audio_peak = a;
       }
+      if (audio.active()) audio.push(audio_buf.data(), 800);
     }
     if (stop_frame && n >= stop_frame) throw ps2::GuestExit{0};
     gs->on_vblank();

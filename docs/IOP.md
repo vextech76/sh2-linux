@@ -108,12 +108,20 @@ frames mixed, peak 0`. The mixer is exercised by unit tests with synthetic ADPCM
 
 ## Real sound modules in the boot runtime
 
-`iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. `lantern-boot`
-now loads `LIBSD.IRX`, `SD_CD.IRX`, `SDSTR.IRX` and `SOUNDCD.IRX`, starts their initialisers and
-runs their threads between EE frames (100k IOP instructions per frame). `SifHle` shares the
-runtime's RAM and, for a SID registered by a real module, sends the RPC call to that module's server
-instead of the placeholder. The sound driver registers SID `0x15` with function `0x478` and buffer
-`0x56700`; in a 2,100-frame run the bridge served **1,970 real RPC calls with zero failures**.
+`iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. With
+`--sound-iop`, `lantern-boot` loads `LIBSD.IRX`, `SD_CD.IRX`, `SDSTR.IRX` and `SOUNDCD.IRX`, starts
+their initialisers and runs their threads between EE frames (100k IOP instructions per frame).
+`SifHle` shares the runtime's RAM and, for a SID registered by a real module, sends the RPC call to
+that module's server instead of the placeholder. The sound driver registers SID `0x15` with
+function `0x478` and buffer `0x56700`; in a 2,100-frame run the bridge served **1,970 real RPC calls
+with zero failures**.
+
+The real-sound path is **opt-in** because sharing the fake service RAM with the sound runtime
+currently makes the game's first `sceCdSearchFile`/file-table load fail (the search packet reaches
+the IOP with a zeroed name, so the game never loads its file table and aborts the boot path). The
+default `lantern-boot` path keeps the proven HLE services and title screen; the sound runtime is
+used by `lantern-iop` and by `--sound-iop` for diagnosis. Resolving that shared-memory/layout
+interaction is part of LAN-39.
 
 Thbase alarms and timrman handlers are now real: they are scheduled on the IOP virtual clock and run
 as high-priority guest threads (`IopScheduler::schedule_callback`), one at a time. That is what
@@ -122,9 +130,9 @@ The callbacks still run in thread context, not an interrupt context; no IOP inte
 delivered yet.
 
 After the title screen's Start press the EE main thread terminates, but the game does not load
-`MENU.MGF`: the remaining threads wait on semaphores and the display stays on the title. The next
-candidate is the SPU2/DMA path (playback completion) rather than SIF, since the sound RPC bridge is
-now answering successfully.
+`MENU.MGF`: the remaining threads wait on semaphores and the display stays on the title. This
+happens with or without the real sound runtime, so the next candidates are the EE loader thread's
+semaphore wake-up and VU1/IPU (both still placeholders), not SIF alone.
 
 ## Probe results
 

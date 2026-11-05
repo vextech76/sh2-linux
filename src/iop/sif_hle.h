@@ -44,9 +44,8 @@ class SifHle final : public ps2::SifEndpoint {
   static constexpr uint32_t kIopRamSize = 2u << 20;
   // Modelled IOP RAM map: command buffer, 16 RPC server buffers (16 KB each), then heap.
   static constexpr uint32_t kCmdBuffer = 0x000A0000;  // matches Hardware's SMCOM value
-  // Below the real IOP heap (0x100000..0x1F0000) used by the sound modules.
-  static constexpr uint32_t kServerBufferBase = 0x000A1000, kServerBufferStride = 0x4000;
-  static constexpr uint32_t kHeapBase = 0x000E1000, kHeapEnd = 0x00100000;
+  static constexpr uint32_t kServerBufferBase = 0x00100000, kServerBufferStride = 0x4000;
+  static constexpr uint32_t kHeapBase = 0x00140000, kHeapEnd = 0x001F0000;
 
   explicit SifHle(ee::Memory& ee_mem) : ee_(ee_mem), iop_ram_(kIopRamSize) {}
 

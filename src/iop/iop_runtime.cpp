@@ -1,6 +1,7 @@
 #include "iop/iop_runtime.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <fstream>
@@ -22,9 +23,12 @@ constexpr uint32_t kInitStepBudget = 1500000;
 IopRuntime::IopRuntime() : hle_(mem_), sched_(mem_, interp_), kernel_(hle_, sched_) {
   // Sound-only modules end well below 0xA0000 (the SIF command buffer) and 0x100000 (the fake
   // service buffers). Keep the IOP heap in the free window between them.
-  kernel_.heap.next = 0x00100000;
-  kernel_.heap.end = 0x001F0000;
+  // Sound-only modules end below 0x5E000. The real heap owns 0x60000..0x140000; the fake
+  // service buffers and heap live above it (0x140000..0x1F0000).
+  kernel_.heap.next = 0x00060000;
+  kernel_.heap.end = 0x00100000;
   callback_stack_top_ = kernel_.heap.alloc(0x2000) + 0x2000;
+  rpc_stack_base_ = kernel_.heap.alloc(0x4000);
 
   mem_.set_mmio([this](uint32_t a, void* o, unsigned n) { mmio_read(a, o, n); },
                 [this](uint32_t a, const void* i, unsigned n) { mmio_write(a, i, n); });
@@ -170,7 +174,7 @@ bool IopRuntime::load_sound_modules(const std::filesystem::path& extracted, std:
 bool IopRuntime::start_modules(std::string* error) {
   for (const auto& module : modules_) {
     if (!module.has_entry()) continue;
-    const uint32_t stack_size = 0x4000;
+    const uint32_t stack_size = 0x2000;
     const uint32_t stack = kernel_.heap.alloc(stack_size);
     if (!stack) {
       if (error) *error = "IOP thread-stack heap exhausted";

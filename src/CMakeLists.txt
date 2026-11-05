@@ -79,7 +79,7 @@ target_link_libraries(lantern_render PUBLIC lantern_config PRIVATE Vulkan::Vulka
                       lantern_warnings)
 
 # --- platform: SDL3 window/events ---
-add_library(lantern_platform STATIC platform/sdl_platform.cpp)
+add_library(lantern_platform STATIC platform/sdl_platform.cpp platform/audio.cpp)
 target_link_libraries(lantern_platform PUBLIC lantern_render lantern_input PRIVATE SDL3::SDL3 lantern_warnings)
 
 add_executable(lantern-boot ps2/boot_main.cpp)

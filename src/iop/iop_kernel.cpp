@@ -489,6 +489,7 @@ void IopKernel::install() {
     const uint32_t priority = m.read<uint32_t>(p + 16);
     if (stack_size < 0x400) stack_size = 0x400;
     const uint32_t stack = heap.alloc(stack_size + 16);
+    if (stack && stack < 0x100000) std::fprintf(stderr, "[iop] thread stack 0x%05x size 0x%x\n", stack, stack_size);
     if (!entry || !stack) {
       cpu.gpr[2] = 0xFFFFFFFFu;
       return;
