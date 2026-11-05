@@ -26,6 +26,7 @@
 #include "gs/gs.h"
 #include "gs/rasterizer.h"
 #include "input/input_system.h"
+#include "iop/iop_runtime.h"
 #include "iop/memcard.h"
 #include "iop/services.h"
 #include "iop/sif_hle.h"
@@ -135,6 +136,10 @@ struct Report {
       for (const auto& [sid, n] : st.binds) r += std::format("  {} (bind x{})\n", sif->server_name(sid), n);
       r += "RPC calls (server, function):\n";
       for (const auto& [k, n] : st.calls) r += std::format("  {} fn {} x{}\n", sif->server_name(k.first), k.second, n);
+      if (!st.real_calls.empty()) {
+        r += std::format("real IOP RPC calls (failed {}):\n", st.real_failures);
+        for (const auto& [sid, n] : st.real_calls) r += std::format("  0x{:08x} x{}\n", sid, n);
+      }
     }
     if (g_gs) {
       const auto& g = g_gs->stats();
@@ -198,6 +203,7 @@ int main(int argc, char** argv) {
   double seconds = 20;
   bool trace = false;
   bool window = false;
+  bool sound_iop = true;
   bool turbo = false;
   char mc_probe = 'A';
   std::string watch;  // debug: ADDR[:SIZE] to log guest accesses (hex)
@@ -224,6 +230,8 @@ int main(int argc, char** argv) {
       seconds = std::stod(argv[++i]);
     else if (a == "--trace")
       trace = true;
+    else if (a == "--no-sound-iop")
+      sound_iop = false;
     else if (a == "--swizzle-variant" && i + 1 < argc) {  // "T8" or "T8,T4"
       std::string spec = argv[++i];
       auto comma = spec.find(',');
@@ -262,7 +270,8 @@ int main(int argc, char** argv) {
       std::fputs(
           "usage: lantern-boot --extracted DIR --iso ISO [--game-lib PATH] [--seconds N] [--trace] [--window] "
           "[--dump-frames DIR "
-          "[--dump-every N] [--dump-textures DIR] [--swizzle-variant N] [--turbo] [--frames N]\n",
+          "[--dump-every N] [--dump-textures DIR] [--swizzle-variant N] [--turbo] [--frames N] "
+          "[--no-sound-iop]\n",
           stderr);
       return 2;
     }
@@ -378,7 +387,9 @@ int main(int argc, char** argv) {
   }
   if (!dump_dir.empty()) fs::create_directories(dump_dir);
   if (!texture_dir.empty()) fs::create_directories(texture_dir);
+  std::unique_ptr<iop::IopRuntime> iop_rt;
   kernel.set_vblank_hook([&](uint64_t n) {
+    if (iop_rt) iop_rt->run(100000);  // keep the sound modules moving between EE frames
     if (stop_frame && n >= stop_frame) throw ps2::GuestExit{0};
     gs->on_vblank();
     if (plat) {
@@ -446,6 +457,17 @@ int main(int argc, char** argv) {
   g_cdvd = &cdvd;
   g_loadfile = &loadfile;
   sif.set_reset_hook([&] { hw.iop_reset(); });
+  if (sound_iop) {
+    iop_rt = std::make_unique<iop::IopRuntime>();
+    std::string iop_err;
+    if (!iop_rt->load_sound_modules(extracted, &iop_err) || !iop_rt->start_modules(&iop_err)) {
+      log::warn("iop", "real IOP sound modules unavailable: {}", iop_err);
+      iop_rt.reset();
+    } else {
+      sif.set_iop(iop_rt.get());
+      log::info("iop", "real IOP sound modules running ({} modules)", iop_rt->modules().size());
+    }
+  }
   kernel.set_sif(&sif);
 
   // Overlays (read-only from the disc) for overlay-window identification.

@@ -82,6 +82,9 @@ Loads the game's own `.IRX` modules on the R3000A, resolves inter-module imports
 initialiser and every thread it starts under the priority scheduler. Findings and the remaining
 kernel surface are in `docs/IOP.md`. The probe is read-only and never writes game-derived data.
 
+`lantern-boot` runs the real sound modules by default (LIBSD/SD_CD/SDSTR/SOUNDCD). Pass
+`--no-sound-iop` to fall back to the placeholder sound RPC service while debugging.
+
 ## 9. Boot (headless, development)
 
 ```sh

@@ -43,6 +43,13 @@ bool IopScheduler::delete_thread(uint32_t id) {
   return true;
 }
 
+bool IopScheduler::remove_thread(uint32_t id) {
+  const int idx = find(id);
+  if (idx < 0 || idx == current_) return false;
+  threads_.erase(threads_.begin() + idx);
+  return true;
+}
+
 int IopScheduler::current_id() const {
   if (current_ < 0 || static_cast<size_t>(current_) >= threads_.size()) return -1;
   return static_cast<int>(threads_[static_cast<size_t>(current_)].id);
@@ -134,6 +141,39 @@ uint32_t IopScheduler::sleeping_on(ThreadWaitKind kind, uint32_t object) const {
   return n;
 }
 
+void IopScheduler::schedule_callback(uint32_t pc, uint32_t arg, uint32_t gp, uint32_t stack_base, uint32_t stack_size,
+                                     uint64_t due_us, uint32_t token, std::function<void(uint32_t, uint32_t)> done) {
+  callbacks_.push_back({pc, arg, gp, stack_base, stack_size, token, due_us, std::move(done)});
+}
+
+bool IopScheduler::cancel_callback(uint32_t token) {
+  for (auto it = callbacks_.begin(); it != callbacks_.end(); ++it) {
+    if (it->token != token) continue;
+    callbacks_.erase(it);
+    return true;
+  }
+  return false;
+}
+
+void IopScheduler::activate_callbacks() {
+  if (active_callback_) return;
+  const uint64_t now = now_us();
+  for (auto it = callbacks_.begin(); it != callbacks_.end(); ++it) {
+    if (it->due_us > now) continue;
+    const PendingCallback cb = std::move(*it);
+    callbacks_.erase(it);
+    const uint32_t id = create_thread(cb.pc, cb.arg, 1, cb.stack_base, cb.stack_size, cb.gp);
+    IopThread* t = thread(id);
+    if (!t) continue;
+    t->callback = true;
+    t->callback_token = cb.token;
+    t->callback_done = cb.done;
+    t->state = ThreadState::Ready;
+    active_callback_ = id;
+    return;
+  }
+}
+
 void IopScheduler::advance_to(uint64_t us) {
   const uint64_t target = (us * 36864 + 999) / 1000;  // ceil, so now_us() >= us
   if (target > cycles_) cycles_ = target;
@@ -166,6 +206,12 @@ bool IopScheduler::timed_wake_pending(uint64_t* next_us) const {
       found = true;
     }
   }
+  for (const auto& cb : callbacks_) {
+    if (cb.due_us < best) {
+      best = cb.due_us;
+      found = true;
+    }
+  }
   if (found) *next_us = best;
   return found;
 }
@@ -191,6 +237,44 @@ int IopScheduler::pick_next() {
   return best;
 }
 
+bool IopScheduler::run_until_done(uint32_t id, uint64_t max_steps, SchedulerStats* stats) {
+  SchedulerStats total;
+  uint64_t used = 0;
+  while (true) {
+    IopThread* t = thread(id);
+    if (!t) return false;
+    if (t->state == ThreadState::Dead) break;
+    if (used >= max_steps) {
+      total.budget_exhausted = true;
+      break;
+    }
+    const uint64_t chunk = std::min<uint64_t>(kQuantum, max_steps - used);
+    SchedulerStats s = run(chunk);
+    used += s.steps;
+    total.steps += s.steps;
+    total.switches += s.switches;
+    total.cycles = s.cycles;
+    if (s.trapped) {
+      total.trapped = true;
+      total.trap_thread = s.trap_thread;
+      total.trap_pc = s.trap_pc;
+      total.trap = s.trap;
+      break;
+    }
+    if (s.deadlock) {
+      total.deadlock = true;
+      break;
+    }
+    if (s.steps == 0) {
+      total.deadlock = true;
+      break;
+    }
+  }
+  if (stats) *stats = total;
+  IopThread* done = thread(id);
+  return done && done->state == ThreadState::Dead && !total.trapped;
+}
+
 SchedulerStats IopScheduler::run(uint64_t max_steps) {
   SchedulerStats stats;
   current_ = -1;
@@ -198,6 +282,7 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
 
   while (true) {
     update_wakeups();
+    activate_callbacks();
     if (stats.steps >= max_steps) {
       stats.budget_exhausted = true;
       break;
@@ -205,7 +290,7 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
     const int idx = pick_next();
     if (idx < 0) {
       // All threads dead is completion; a live thread with no wake source is a deadlock.
-      bool any_alive = false;
+      bool any_alive = !callbacks_.empty() || active_callback_ != 0;
       for (const auto& t : threads_)
         if (t.state != ThreadState::Dead) any_alive = true;
       if (!any_alive) break;
@@ -232,6 +317,10 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
       }
       if (t.cpu.pc == kReturnAddress) {
         t.state = ThreadState::Dead;
+        if (t.callback) {
+          completed_.push_back({t.callback_token, t.cpu.gpr[2], std::move(t.callback_done)});
+          if (active_callback_ == t.id) active_callback_ = 0;
+        }
         break;
       }
       const uint32_t pc = t.cpu.pc;
@@ -252,6 +341,10 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
         break;
       } catch (const ThreadExit&) {
         t.state = ThreadState::Dead;
+        if (t.callback) {
+          completed_.push_back({t.callback_token, t.cpu.gpr[2], std::move(t.callback_done)});
+          if (active_callback_ == t.id) active_callback_ = 0;
+        }
         break;
       } catch (const Trap& e) {
         t.state = ThreadState::Dead;
@@ -261,6 +354,7 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
         stats.trap_thread = t.id;
         stats.trap_pc = e.pc;
         stats.trap = e.what();
+        if (t.callback && active_callback_ == t.id) active_callback_ = 0;
         break;
       }
 
@@ -274,6 +368,10 @@ SchedulerStats IopScheduler::run(uint64_t max_steps) {
         break;
       }
     }
+
+    for (auto& c : completed_)
+      if (c.done) c.done(c.token, c.result);
+    completed_.clear();
 
     if (stats.trapped || stats.budget_exhausted) break;
   }

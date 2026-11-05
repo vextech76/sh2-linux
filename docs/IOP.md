@@ -89,6 +89,26 @@ quantum rotates ready threads at the same priority.
 Still missing from this layer: hardware-timer callbacks do not fire, and no interrupt context is
 delivered. Those are the next step.
 
+## Real sound modules in the boot runtime
+
+`iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. `lantern-boot`
+now loads `LIBSD.IRX`, `SD_CD.IRX`, `SDSTR.IRX` and `SOUNDCD.IRX`, starts their initialisers and
+runs their threads between EE frames (100k IOP instructions per frame). `SifHle` shares the
+runtime's RAM and, for a SID registered by a real module, sends the RPC call to that module's server
+instead of the placeholder. The sound driver registers SID `0x15` with function `0x478` and buffer
+`0x56700`; in a 2,100-frame run the bridge served **1,970 real RPC calls with zero failures**.
+
+Thbase alarms and timrman handlers are now real: they are scheduled on the IOP virtual clock and run
+as high-priority guest threads (`IopScheduler::schedule_callback`), one at a time. That is what
+unblocked the sound driver's RPC server, which waits on a semaphore its alarm callback signals.
+The callbacks still run in thread context, not an interrupt context; no IOP interrupt vector is
+delivered yet.
+
+After the title screen's Start press the EE main thread terminates, but the game does not load
+`MENU.MGF`: the remaining threads wait on semaphores and the display stays on the title. The next
+candidate is the SPU2/DMA path (playback completion) rather than SIF, since the sound RPC bridge is
+now answering successfully.
+
 ## Probe results
 
 `--inspect` currently loads **11 modules, 441 imported functions, 6085 `j`/`jal` targets**; after
@@ -127,27 +147,30 @@ registers the SPU2 model must implement first; the access log is the evidence, n
 
 ## What is real and what is a probe shim
 
-Real behaviour in `lantern-iop`: IRX copying/relocation, import/export parsing and stub patching,
-entry-point calling convention, `loadcore` library registration (returns `KE_OK`), a bump
-`sysmem` allocator, the priority scheduler with blocking waits and a virtual clock, semaphore
-counts and hand-off, hardware-timer allocation/register state, vblank wakeups, the 36.864 MHz
-clock conversions, and the R3000A execution itself.
+Real behaviour in `lantern-iop` and `lantern-boot`: IRX copying/relocation, import/export parsing
+and stub patching, entry-point calling convention, `loadcore` library registration (returns
+`KE_OK`), a bump `sysmem` allocator, the priority scheduler with blocking waits and a virtual
+clock, semaphore counts and hand-off, hardware-timer allocation/register state, thbase alarms and
+timrman callbacks (as guest threads), vblank wakeups, the 36.864 MHz clock conversions, the SIF RPC
+bridge to real IOP servers, and the R3000A execution itself.
 
 Probe-only shims, marked here so they are not mistaken for final semantics:
 
-- Hardware-timer callbacks are stored but never fired; no IOP interrupt context is delivered.
-- SIF is reported already initialised; `sceSifSetDma` completes immediately and `sceSifRpcLoop`
-  returns instead of waiting for EE requests. No data crosses between the CPUs yet.
+- IOP interrupts are not delivered. Timer/alarm callbacks run as guest threads, not on an interrupt
+  vector; SPU2/DMA completion has no IRQ path yet.
+- SIF transfers complete immediately; the EE-side command parser still owns packet marshalling and
+  the boot path still uses the HLE services for pad, memory card and CDVD.
 - Unmapped I/O reads return zero and writes are logged; the SPU2 and DMA registers have no
-  behaviour yet.
+  behaviour yet. This is now the main title→menu suspect.
 - `WaitVblankStart/End/WaitVblank/WaitNonVblank` all wake at the next frame.
 
 ## Next steps
 
-1. Fire hardware-timer callbacks and deliver SPU2/DMA interrupts in an interrupt context.
-2. Implement the measured SPU2 register block and voice mixing, then feed its output to the audio
-   backend.
-3. Model the IOP DMA controller and wire SIF DMA to the existing EE-side SIF path so RPC calls
-   actually cross between the CPUs; then `SOUNDCD`'s RPC server can receive the game's requests.
-4. Grow the kernel HLE from the 109 unresolved imports, keeping the public function numbering
+1. Implement the measured SPU2 register block, voice mixing and SPU2 DMA, then feed PCM to the
+   audio backend and deliver its completion interrupt.
+2. Add an IOP interrupt context for SPU2/DMA/vblank and route it to the registered intrman
+   handlers.
+3. Finish the title→menu investigation: with SPU2 working, re-check whether the EE loader thread
+   advances to `MENU.MGF`; otherwise pursue VU1/IPU (both still placeholders).
+4. Grow the kernel HLE from the remaining unresolved imports, keeping the public function numbering
    (ps2sdk headers) as the interface reference.

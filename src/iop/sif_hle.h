@@ -12,6 +12,8 @@
 
 namespace lantern::iop {
 
+class IopRuntime;
+
 // SIF command IDs (identical in SCE libsif and ps2sdk).
 enum SifCmd : uint32_t {
   kChangeSaddr = 0x80000000,
@@ -42,12 +44,15 @@ class SifHle final : public ps2::SifEndpoint {
   static constexpr uint32_t kIopRamSize = 2u << 20;
   // Modelled IOP RAM map: command buffer, 16 RPC server buffers (16 KB each), then heap.
   static constexpr uint32_t kCmdBuffer = 0x000A0000;  // matches Hardware's SMCOM value
-  static constexpr uint32_t kServerBufferBase = 0x00100000, kServerBufferStride = 0x4000;
-  static constexpr uint32_t kHeapBase = 0x00140000, kHeapEnd = 0x001F0000;
+  // Below the real IOP heap (0x100000..0x1F0000) used by the sound modules.
+  static constexpr uint32_t kServerBufferBase = 0x000A1000, kServerBufferStride = 0x4000;
+  static constexpr uint32_t kHeapBase = 0x000E1000, kHeapEnd = 0x00100000;
 
   explicit SifHle(ee::Memory& ee_mem) : ee_(ee_mem), iop_ram_(kIopRamSize) {}
 
   void set_reset_hook(std::function<void()> fn) { reset_hook_ = std::move(fn); }
+  // Route EE→IOP memory and registered RPC servers through a real IOP runtime.
+  void set_iop(IopRuntime* iop) { iop_ = iop; }
   // Answer otherwise-unserved sound-driver RPCs with "ready" (PLACEHOLDER: no audio output).
   void set_sound_placeholder(bool on) { placeholder_ = on; }
   void register_server(uint32_t sid, std::string name, RpcServer fn) {
@@ -62,6 +67,8 @@ class SifHle final : public ps2::SifEndpoint {
     std::map<uint32_t, uint64_t> binds;                       // sid -> count
     std::map<std::pair<uint32_t, uint32_t>, uint64_t> calls;  // (sid, fno) -> count
     std::map<uint32_t, uint64_t> placeholder_calls;           // sid -> calls answered with zeros
+    std::map<uint32_t, uint64_t> real_calls;                  // sid -> calls served by a real IOP module
+    uint64_t real_failures = 0;
     uint64_t replies = 0;
   };
   const Stats& stats() const { return stats_; }
@@ -70,6 +77,8 @@ class SifHle final : public ps2::SifEndpoint {
 
  private:
   uint32_t iop32(uint32_t a) const;
+  uint8_t iop_read8(uint32_t a) const;
+  void iop_write8(uint32_t a, uint8_t v);
   void handle_command(uint32_t addr);
   void queue(std::vector<uint32_t> words);
   void rpc_end(uint32_t pkt, uint32_t cid, uint32_t server, uint32_t buff);
@@ -90,6 +99,7 @@ class SifHle final : public ps2::SifEndpoint {
   uint32_t next_handle_ = 0x00180000;
   Stats stats_;
   std::function<void()> reset_hook_;
+  IopRuntime* iop_ = nullptr;
   bool placeholder_ = true;
 };
 

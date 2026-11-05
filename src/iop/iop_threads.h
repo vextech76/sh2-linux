@@ -42,6 +42,9 @@ struct IopThread {
   uint64_t steps = 0;
   uint32_t trap_pc = 0;
   std::string trap;
+  bool callback = false;
+  uint32_t callback_token = 0;
+  std::function<void(uint32_t, uint32_t)> callback_done;
 
   uint32_t stack_top() const { return (stack_base + stack_size) & ~15u; }
 };
@@ -74,6 +77,7 @@ class IopScheduler {
                          uint32_t gp);
   bool start_thread(uint32_t id, uint32_t arg);
   bool delete_thread(uint32_t id);
+  bool remove_thread(uint32_t id);  // erase a dead thread (RPC call threads)
 
   int current_index() const { return current_; }
   int current_id() const;
@@ -101,9 +105,29 @@ class IopScheduler {
   void set_observer(StepObserver observer) { observer_ = std::move(observer); }
 
   SchedulerStats run(uint64_t max_steps);
+  // Run until `id` is Dead. Other threads run normally, so blocking RPC servers can be woken.
+  // Returns false on trap, deadlock or budget exhaustion.
+  bool run_until_done(uint32_t id, uint64_t max_steps, SchedulerStats* stats);
+
+  // Guest timer/alarm callbacks. They run one at a time as high-priority threads; the callback's
+  // v0 is reported to `done` (timrman uses it as the next compare value).
+  void schedule_callback(uint32_t pc, uint32_t arg, uint32_t gp, uint32_t stack_base, uint32_t stack_size,
+                         uint64_t due_us, uint32_t token, std::function<void(uint32_t, uint32_t)> done = {});
+  bool cancel_callback(uint32_t token);
 
  private:
+  struct PendingCallback {
+    uint32_t pc = 0, arg = 0, gp = 0, stack_base = 0, stack_size = 0, token = 0;
+    uint64_t due_us = 0;
+    std::function<void(uint32_t, uint32_t)> done;
+  };
+  struct CompletedCallback {
+    uint32_t token = 0, result = 0;
+    std::function<void(uint32_t, uint32_t)> done;
+  };
+
   void update_wakeups();
+  void activate_callbacks();
   void advance_to(uint64_t us);
   int pick_next();
   bool timed_wake_pending(uint64_t* next_us) const;
@@ -117,6 +141,9 @@ class IopScheduler {
   uint64_t next_vblank_us_ = kVblankPeriodUs;
   uint32_t last_pick_id_ = 0;
   bool reschedule_ = false;
+  std::vector<PendingCallback> callbacks_;
+  std::vector<CompletedCallback> completed_;
+  uint32_t active_callback_ = 0;
   StepObserver observer_;
 };
 

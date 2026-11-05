@@ -4,6 +4,7 @@
 #include <format>
 
 #include "core/log.h"
+#include "iop/iop_runtime.h"
 
 namespace lantern::iop {
 namespace {
@@ -30,7 +31,20 @@ std::string SifHle::server_name(uint32_t sid) const {
   return it == servers_.end() ? std::format("unknown 0x{:08x}", sid) : std::format("{} 0x{:08x}", it->second.name, sid);
 }
 
+uint8_t SifHle::iop_read8(uint32_t a) const {
+  if (iop_) return iop_->mem().read<uint8_t>(a & (kIopRamSize - 1));
+  return iop_ram_[a % kIopRamSize];
+}
+
+void SifHle::iop_write8(uint32_t a, uint8_t v) {
+  if (iop_)
+    iop_->mem().write<uint8_t>(a & (kIopRamSize - 1), v);
+  else
+    iop_ram_[a % kIopRamSize] = v;
+}
+
 uint32_t SifHle::iop32(uint32_t a) const {
+  if (iop_) return iop_->mem().read<uint32_t>(a & (kIopRamSize - 1));
   uint32_t v;
   std::memcpy(&v, &iop_ram_[a % kIopRamSize], 4);
   return v;
@@ -38,7 +52,7 @@ uint32_t SifHle::iop32(uint32_t a) const {
 
 void SifHle::ee_to_iop(uint32_t src, uint32_t dest, uint32_t size, uint32_t) {
   dest &= kIopRamSize - 1;
-  for (uint32_t i = 0; i < size; ++i) iop_ram_[(dest + i) % kIopRamSize] = ee_.read<uint8_t>(src + i);
+  for (uint32_t i = 0; i < size; ++i) iop_write8(dest + i, ee_.read<uint8_t>(src + i));
   if (dest == kCmdBuffer && size >= 16) handle_command(dest);
 }
 
@@ -77,12 +91,21 @@ void SifHle::handle_command(uint32_t a) {
     case kRpcBind: {
       const uint32_t sid = iop32(a + 32);
       ++stats_.binds[sid];
-      const uint32_t handle = next_handle_;
-      next_handle_ += 0x40;
-      const uint32_t buff = kServerBufferBase + static_cast<uint32_t>(bindings_.size() % 16) * kServerBufferStride;
+      const RpcServerInfo* real = iop_ ? iop_->find_rpc(sid) : nullptr;
+      uint32_t handle = 0, buff = 0;
+      if (real) {
+        handle = real->struct_addr;
+        buff = real->buff;
+      } else {
+        handle = next_handle_;
+        next_handle_ += 0x40;
+        buff = kServerBufferBase + static_cast<uint32_t>(bindings_.size() % 16) * kServerBufferStride;
+      }
       bindings_[handle] = {sid, buff};
       log::info(kSub, "RPC bind {} -> server 0x{:08x}{}", server_name(sid), handle,
-                servers_.contains(sid) ? "" : " (PLACEHOLDER: no HLE server, calls answered with zeros)");
+                real                     ? " (real IOP module)"
+                : servers_.contains(sid) ? ""
+                                         : " (PLACEHOLDER: no HLE server, calls answered with zeros)");
       rpc_end(a, kRpcBind, handle, buff);
       return;
     }
@@ -107,6 +130,27 @@ void SifHle::handle_command(uint32_t a) {
         }
         log::debug(kSub, "RPC {} fn {} send {} recv {} buff 0x{:x} args {} |{}|", server_name(sid), fno, send_size,
                    recv_size, buff, hex, txt);
+      }
+      if (const RpcServerInfo* real = iop_ ? iop_->find_rpc(sid) : nullptr) {
+        // The EE wrote the send buffer to the address returned at bind time; make sure the real
+        // server's own buffer has the same bytes.
+        const uint32_t dst = real->buff ? real->buff : buff;
+        if (dst != buff)
+          for (uint32_t i = 0; i < send_size; ++i) iop_write8(dst + i, iop_read8(buff + i));
+        std::vector<uint8_t> reply;
+        std::string rerr;
+        if (iop_->call_rpc(*real, fno, send_size, recv_size, &reply, &rerr)) {
+          ++stats_.real_calls[sid];
+          if (receive && recv_size)
+            for (uint32_t i = 0; i < recv_size; ++i) ee_.write<uint8_t>(receive + i, reply[i]);
+        } else {
+          ++stats_.real_failures;
+          log::warn(kSub, "real IOP RPC {} function {} failed: {}", server_name(sid), fno, rerr);
+          if (receive && recv_size)
+            for (uint32_t i = 0; i < recv_size; ++i) ee_.write<uint8_t>(receive + i, 0);
+        }
+        rpc_end(a, kRpcCall, server, buff);
+        return;
       }
       if (auto it = servers_.find(sid); it != servers_.end()) {
         it->second.fn(call);

@@ -408,8 +408,19 @@ Decision D-6.1 needs an R3000A to run the game's own sound modules. Implemented 
 - Unit tests cover delays, priorities, semaphore hand-off, vblank wakeups, traps and dormant-thread
   deadlock.
 
-Not yet: hardware-timer callbacks and interrupt delivery, the SPU2 register/voice model, and the
-SIF DMA path into the existing EE-side SIF bridge. Those are LAN-35..LAN-37.
+### 9.4 Real IOP runtime and sound RPC bridge ✅
+
+- `iop_runtime.*` packages RAM, interpreter, scheduler, kernel HLE and the game's modules. Boot
+  loads LIBSD/SD_CD/SDSTR/SOUNDCD, runs their initialisers and threads between EE frames, and
+  shares RAM with `SifHle`.
+- `SifHle` forwards RPC calls for SIDs registered by real modules to their guest server functions;
+  thbase alarms and timrman handlers are scheduled on the virtual clock and run as guest threads.
+  A 2,100-frame run served 1,970 real sound RPC calls with zero failures.
+- After Start the EE main thread terminates, but the game does not yet load `MENU.MGF`; the display
+  remains on the title. The remaining suspects are SPU2/DMA completion and VU1/IPU.
+
+Not yet: an IOP interrupt context, the SPU2 register/voice/DMA model, VU1/IPU execution, and the
+remaining title→menu blocker. Those are LAN-36..LAN-39.
 
 ## 9. Known limitations / risks
 

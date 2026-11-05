@@ -139,6 +139,44 @@ TEST_CASE("IopScheduler: a trap is reported and stops the run") {
   CHECK(sched.thread(id)->state == ThreadState::Dead);
 }
 
+TEST_CASE("IopScheduler: a scheduled callback runs and reports its result") {
+  IopMemory mem;
+  Interpreter interp;
+  IopScheduler sched(mem, interp);
+  word(mem, kBase, 0x24020042);  // addiu v0,zero,0x42
+  word(mem, kBase + 4, kJrRa);
+  word(mem, kBase + 8, kNop);
+  uint32_t got_token = 0, got_result = 0;
+  sched.schedule_callback(kBase, 0, 0, 0x00008000, 0x1000, sched.now_us() + 1000, 7,
+                          [&](uint32_t token, uint32_t result) {
+                            got_token = token;
+                            got_result = result;
+                          });
+  auto st = sched.run(1000);
+  CHECK_FALSE(st.trapped);
+  CHECK_FALSE(st.deadlock);
+  CHECK(got_token == 7);
+  CHECK(got_result == 0x42);
+  CHECK(sched.now_us() >= 1000);
+}
+
+TEST_CASE("IopScheduler: a cancelled callback never runs") {
+  IopMemory mem;
+  Interpreter interp;
+  IopScheduler sched(mem, interp);
+  word(mem, kBase, 0x24020042);
+  word(mem, kBase + 4, kJrRa);
+  word(mem, kBase + 8, kNop);
+  bool ran = false;
+  sched.schedule_callback(kBase, 0, 0, 0x00008000, 0x1000, sched.now_us() + 1000, 9,
+                          [&](uint32_t, uint32_t) { ran = true; });
+  CHECK(sched.cancel_callback(9));
+  CHECK_FALSE(sched.cancel_callback(9));
+  auto st = sched.run(1000);
+  CHECK_FALSE(st.trapped);
+  CHECK_FALSE(ran);
+}
+
 TEST_CASE("IopScheduler: a dormant thread is not run and reports a deadlock") {
   IopMemory mem;
   Interpreter interp;
