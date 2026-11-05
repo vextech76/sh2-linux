@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,13 @@ struct IopKernel {
   SemaTable semas;
   uint32_t module_gp = 0;
   std::map<uint32_t, RpcServerInfo> rpc_servers;
+  struct IntrHandler {
+    uint32_t function = 0, arg = 0;
+    int mode = 0;
+    bool enabled = false;
+  };
+  std::map<int, IntrHandler> intr_handlers;
+  std::set<int> irq_pending;
   std::map<uint32_t, std::pair<uint32_t, uint32_t>> alarms;  // id -> (callback, arg)
   uint32_t next_alarm_id = 1;
   uint32_t callback_stack_base = 0;
@@ -101,6 +109,7 @@ struct IopKernel {
   void ensure_callback_stack();
   uint32_t schedule_alarm(uint32_t callback, uint32_t arg, uint64_t usec, uint32_t gp);
   void arm_timer(int id);
+  void raise_irq(int irq);
 
   const RpcServerInfo* find_rpc(uint32_t sid) const {
     auto it = rpc_servers.find(sid);

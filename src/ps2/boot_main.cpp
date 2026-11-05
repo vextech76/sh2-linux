@@ -60,6 +60,8 @@ iop::PadService* g_pad = nullptr;
 gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
+std::atomic<int> g_audio_peak{0};
+std::atomic<uint64_t> g_audio_frames{0};
 
 struct Report {
   ps2::Kernel* kernel = nullptr;
@@ -141,6 +143,7 @@ struct Report {
         for (const auto& [sid, n] : st.real_calls) r += std::format("  0x{:08x} x{}\n", sid, n);
       }
     }
+    r += std::format("audio: {} frames mixed, peak {}\n", g_audio_frames.load(), g_audio_peak.load());
     if (g_gs) {
       const auto& g = g_gs->stats();
       r += std::format(
@@ -389,7 +392,16 @@ int main(int argc, char** argv) {
   if (!texture_dir.empty()) fs::create_directories(texture_dir);
   std::unique_ptr<iop::IopRuntime> iop_rt;
   kernel.set_vblank_hook([&](uint64_t n) {
-    if (iop_rt) iop_rt->run(100000);  // keep the sound modules moving between EE frames
+    if (iop_rt) {
+      iop_rt->run(100000);  // keep the sound modules moving between EE frames
+      static std::vector<int16_t> audio(800 * 2);
+      iop_rt->mix_audio(audio.data(), 800);
+      g_audio_frames += 800;
+      for (int16_t sample : audio) {
+        const int a = sample < 0 ? -static_cast<int>(sample) : static_cast<int>(sample);
+        if (a > g_audio_peak) g_audio_peak = a;
+      }
+    }
     if (stop_frame && n >= stop_frame) throw ps2::GuestExit{0};
     gs->on_vblank();
     if (plat) {

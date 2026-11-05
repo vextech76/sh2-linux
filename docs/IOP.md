@@ -89,6 +89,23 @@ quantum rotates ready threads at the same priority.
 Still missing from this layer: hardware-timer callbacks do not fire, and no interrupt context is
 delivered. Those are the next step.
 
+## SPU2
+
+`spu2.*` implements the measured SPU2 block: two cores 0x400 apart, 24 voices each, the voice
+parameter and SSA/LSAX/NAX register arrays, key on/off, ENDX/STATX, core and master volumes,
+transfer-address/data, and a 2 MiB sample RAM. Voice playback decodes PS-ADPCM (16-byte blocks,
+shift/filter and the four prediction coefficient pairs), advances at the pitch-derived rate,
+loops at LSAX and raises IOP IRQ 9 when a voice ends. The IOP DMA channels for core 0/1
+(`0x1F8010C0`, `0x1F801500`) copy blocks between IOP RAM and SPU2 RAM and raise IRQ `0x24`/`0x28`
+when the transfer completes.
+
+`intrman.RegisterIntrHandler` now records real handlers; `IopKernel::raise_irq` schedules the
+registered guest handler as a high-priority callback. This is still thread context, not an
+interrupt vector, but it lets the sound driver's completion handlers run and signal semaphores.
+
+At the title screen no voice is keyed on yet, so a 1,500-frame run reports `audio: 1,200,000
+frames mixed, peak 0`. The mixer is exercised by unit tests with synthetic ADPCM blocks.
+
 ## Real sound modules in the boot runtime
 
 `iop_runtime.*` packages the RAM/interpreter/scheduler/kernel-HLE into one object. `lantern-boot`

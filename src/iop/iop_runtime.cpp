@@ -26,14 +26,14 @@ IopRuntime::IopRuntime() : hle_(mem_), sched_(mem_, interp_), kernel_(hle_, sche
   kernel_.heap.end = 0x001F0000;
   callback_stack_top_ = kernel_.heap.alloc(0x2000) + 0x2000;
 
-  // The probe logs MMIO; the runtime accepts it until the SPU2/DMA models exist.
-  mem_.set_mmio([](uint32_t, void* out, unsigned size) { std::memset(out, 0, size); },
-                [](uint32_t, const void*, unsigned) {});
+  mem_.set_mmio([this](uint32_t a, void* o, unsigned n) { mmio_read(a, o, n); },
+                [this](uint32_t a, const void* i, unsigned n) { mmio_write(a, i, n); });
   interp_.set_syscall_hook([this](IopCpu& cpu, IopMemory&, uint32_t pc) {
     if (hle_.dispatch(cpu, pc)) return;
     throw Trap(pc, "IOP syscall (no kernel syscall handler)");
   });
   kernel_.install();
+  spu2_.set_irq_callback([this](int irq) { kernel_.raise_irq(irq); });
 }
 
 bool IopRuntime::add_module(const std::filesystem::path& path, std::string* error) {
@@ -83,6 +83,76 @@ bool IopRuntime::load_all(std::string* error) {
     modules_.push_back(std::move(*mod));
   }
   return true;
+}
+
+void IopRuntime::mmio_read(uint32_t addr, void* out, unsigned size) {
+  const uint32_t phys = addr & 0x1FFFFFFF;
+  if (phys >= 0x1F900000 && phys < 0x1F900800) {
+    spu2_.read(phys, out, size);
+    return;
+  }
+  for (int core = 0; core < 2; ++core) {
+    const uint32_t base = core ? 0x1F801500 : 0x1F8010C0;
+    if (phys < base || phys >= base + 0x10) continue;
+    const uint32_t off = phys - base;
+    uint32_t value = 0;
+    if (off == 0)
+      value = spu_dma_[core].madr;
+    else if (off == 4)
+      value = spu_dma_[core].bcr;
+    else if (off == 8)
+      value = spu_dma_[core].chcr;
+    std::memset(out, 0, size);
+    std::memcpy(out, &value, std::min<size_t>(size, 4));
+    return;
+  }
+  std::memset(out, 0, size);
+}
+
+void IopRuntime::mmio_write(uint32_t addr, const void* in, unsigned size) {
+  const uint32_t phys = addr & 0x1FFFFFFF;
+  if (phys >= 0x1F900000 && phys < 0x1F900800) {
+    spu2_.write(phys, in, size);
+    return;
+  }
+  for (int core = 0; core < 2; ++core) {
+    const uint32_t base = core ? 0x1F801500 : 0x1F8010C0;
+    if (phys < base || phys >= base + 0x10) continue;
+    uint32_t value = 0;
+    std::memcpy(&value, in, std::min<size_t>(size, 4));
+    const uint32_t off = phys - base;
+    if (off == 0)
+      spu_dma_[core].madr = value;
+    else if (off == 4)
+      spu_dma_[core].bcr = value;
+    else if (off == 8) {
+      spu_dma_[core].chcr = value;
+      if (value & 0x01000000u) start_spu_dma(core);
+    }
+    return;
+  }
+}
+
+void IopRuntime::start_spu_dma(int core) {
+  SpuDma& d = spu_dma_[core];
+  const uint32_t amount = (d.bcr & 0xFFFF) * ((d.bcr >> 16) & 0xFFFF) * 4;
+  if (!amount) {
+    d.chcr &= ~0x01000000u;
+    return;
+  }
+  const bool to_spu = (d.chcr & 1) != 0;
+  const uint32_t tsa = spu2_.tsa(core) * 8;
+  for (uint32_t i = 0; i < amount; ++i) {
+    const uint32_t spu_addr = (tsa + i) % Spu2::kRamSize;
+    const uint32_t iop_addr = d.madr + i;
+    if (to_spu)
+      spu2_.ram()[spu_addr] = mem_.read<uint8_t>(iop_addr);
+    else
+      mem_.write<uint8_t>(iop_addr, spu2_.ram()[spu_addr]);
+  }
+  spu2_.set_tsa(core, (spu2_.tsa(core) + amount / 8) & 0x3FFFF);
+  d.chcr &= ~0x01000000u;
+  kernel_.raise_irq(core ? 0x28 : 0x24);
 }
 
 bool IopRuntime::load_sound_modules(const std::filesystem::path& extracted, std::string* error) {

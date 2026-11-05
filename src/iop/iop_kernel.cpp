@@ -129,24 +129,51 @@ void IopKernel::arm_timer(int id) {
                           });
 }
 
+void IopKernel::raise_irq(int irq) {
+  auto it = intr_handlers.find(irq);
+  if (it == intr_handlers.end() || !it->second.enabled || !it->second.function) return;
+  if (!irq_pending.insert(irq).second) return;  // one pending callback per IRQ line
+  ensure_callback_stack();
+  const uint32_t gp = sched.current() ? sched.current()->gp : module_gp;
+  sched.schedule_callback(it->second.function, it->second.arg, gp, callback_stack_base, 0x4000, sched.now_us(),
+                          0xA0000000u | static_cast<uint32_t>(irq),
+                          [this, irq](uint32_t, uint32_t) { irq_pending.erase(irq); });
+}
+
 void IopKernel::install() {
   auto ret0 = [](IopCpu& cpu, IopMemory&) { cpu.gpr[2] = 0; };
 
-  // intrman (ps2sdk iop/system/intrman): 17 = CpuSuspendIntr, 18 = CpuResumeIntr.
-  hle.add({"intrman", 0x0102}, 17, [](IopCpu& cpu, IopMemory& m) {
-    const uint32_t state = cpu.gpr[4];
-    if (state) m.write<uint32_t>(state, 0);
+  // intrman: 4 = RegisterIntrHandler, 5 = ReleaseIntrHandler, 6/7 = Enable/DisableIntr,
+  // 8/9 = CpuDisable/EnableIntr, 17 = CpuSuspendIntr, 18 = CpuResumeIntr.
+  hle.add({"intrman", 0x0102}, 4, [this](IopCpu& cpu, IopMemory&) {
+    const int irq = static_cast<int>(cpu.gpr[4]);
+    IntrHandler& h = intr_handlers[irq];
+    h.mode = static_cast<int>(cpu.gpr[5]);
+    h.function = cpu.gpr[6];
+    h.arg = cpu.gpr[7];
     cpu.gpr[2] = 0;
   });
-  // intrman 6/7 = EnableIntr/DisableIntr, 8/9 = CpuDisableIntr/CpuEnableIntr.
-  hle.add({"intrman", 0x0102}, 6, ret0);
-  hle.add({"intrman", 0x0102}, 7, [](IopCpu& cpu, IopMemory& m) {
+  hle.add({"intrman", 0x0102}, 5, [this](IopCpu& cpu, IopMemory&) {
+    intr_handlers.erase(static_cast<int>(cpu.gpr[4]));
+    cpu.gpr[2] = 0;
+  });
+  hle.add({"intrman", 0x0102}, 6, [this](IopCpu& cpu, IopMemory&) {
+    intr_handlers[static_cast<int>(cpu.gpr[4])].enabled = true;
+    cpu.gpr[2] = 0;
+  });
+  hle.add({"intrman", 0x0102}, 7, [this](IopCpu& cpu, IopMemory& m) {
+    intr_handlers[static_cast<int>(cpu.gpr[4])].enabled = false;
     const uint32_t res = cpu.gpr[5];
     if (res) m.write<uint32_t>(res, 0);
     cpu.gpr[2] = 0;
   });
   hle.add({"intrman", 0x0102}, 8, ret0);
   hle.add({"intrman", 0x0102}, 9, ret0);
+  hle.add({"intrman", 0x0102}, 17, [](IopCpu& cpu, IopMemory& m) {
+    const uint32_t state = cpu.gpr[4];
+    if (state) m.write<uint32_t>(state, 0);
+    cpu.gpr[2] = 0;
+  });
   hle.add({"intrman", 0x0102}, 18, ret0);
 
   // loadcore: 4/5 = FlushIcache/FlushDcache, 6 = RegisterLibraryEntries,

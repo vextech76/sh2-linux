@@ -11,6 +11,7 @@
 #include "iop/iop_kernel.h"
 #include "iop/iop_threads.h"
 #include "iop/irx.h"
+#include "iop/spu2.h"
 
 namespace lantern::iop {
 
@@ -25,6 +26,8 @@ class IopRuntime {
   const IopMemory& mem() const { return mem_; }
   IopKernel& kernel() { return kernel_; }
   const IopKernel& kernel() const { return kernel_; }
+  Spu2& spu2() { return spu2_; }
+  void mix_audio(int16_t* out, uint32_t frames) { spu2_.mix(out, frames); }
 
   bool add_module(const std::filesystem::path& path, std::string* error);
   bool load_sound_modules(const std::filesystem::path& extracted, std::string* error);
@@ -54,12 +57,20 @@ class IopRuntime {
   };
 
   bool load_all(std::string* error);
+  void mmio_read(uint32_t addr, void* out, unsigned size);
+  void mmio_write(uint32_t addr, const void* in, unsigned size);
+  void start_spu_dma(int core);
 
   IopMemory mem_;
   Interpreter interp_;
   IopHle hle_;
   IopScheduler sched_;
   IopKernel kernel_;
+  Spu2 spu2_;
+  struct SpuDma {
+    uint32_t madr = 0, bcr = 0, chcr = 0;
+  };
+  SpuDma spu_dma_[2]{};
   std::vector<Image> images_;
   std::vector<LoadedModule> modules_;
   std::vector<ExportRef> exports_;
