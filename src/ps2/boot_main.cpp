@@ -64,6 +64,7 @@ gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
 ps2::Ipu* g_ipu = nullptr;
+iop::Spu2* g_spu2 = nullptr;
 std::atomic<int> g_audio_peak{0};
 std::atomic<uint64_t> g_audio_frames{0};
 
@@ -185,6 +186,11 @@ struct Report {
       }
     }
     r += std::format("audio: {} frames mixed, peak {}\n", g_audio_frames.load(), g_audio_peak.load());
+    if (g_spu2) {
+      const auto& s = g_spu2->stats();
+      r += std::format("  SPU2: key-ons {}, voice ends {}, ADPCM blocks {}, non-silent mixer frames {}\n", s.key_ons,
+                       s.voice_ends, s.decoded_blocks, s.nonzero_frames);
+    }
     if (g_ipu) {
       const auto& is = g_ipu->stats();
       static constexpr const char* kCmd[10] = {"BCLR",  "IDEC",  "BDEC", "VDEC", "FDEC",
@@ -429,6 +435,19 @@ int main(int argc, char** argv) {
   gs::Gif gif_path2(*gs), gif_path3(*gs);
   auto vu1 = std::make_unique<ps2::Vu1Memory>();
   ps2::Vif1 vif1(*vu1, gif_path2);
+  vif1.set_vu1_start([&](uint32_t addr) {
+    // Diagnostic: dump the uploaded VU1 microprogram (never committed; game-derived data).
+    static bool dumped = false;
+    if (dumped) return;
+    const char* path = std::getenv("LANTERN_VU1_DUMP");
+    if (!path) return;
+    dumped = true;
+    if (FILE* f = std::fopen(path, "wb")) {
+      std::fwrite(vu1->micro.data(), 1, vu1->micro.size(), f);
+      std::fclose(f);
+      log::info("vu1", "dumped VU1 micro memory at MSCAL 0x{:x}", addr);
+    }
+  });
   hw.set_gs(gs.get());
   gs::Rasterizer raster;
   gs->set_rasterizer([&](gs::Gs& g, const gs::Vertex* v, int n, uint64_t prim) { raster.draw(g, v, n, prim); });
@@ -569,6 +588,7 @@ int main(int argc, char** argv) {
       iop_rt.reset();
     } else {
       sif.set_iop(iop_rt.get());
+      g_spu2 = &iop_rt->spu2();
       log::info("iop", "real IOP sound modules running ({} modules)", iop_rt->modules().size());
     }
   }

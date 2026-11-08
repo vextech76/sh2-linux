@@ -43,6 +43,11 @@ class Spu2 {
   uint16_t endx(int core) const { return cores_[core % 2].endx; }
   bool take_irq(int core);
 
+  struct Stats {
+    uint64_t key_ons = 0, voice_ends = 0, decoded_blocks = 0, nonzero_frames = 0;
+  };
+  const Stats& stats() const { return stats_; }
+
  private:
   struct Voice {
     bool active = false;
@@ -79,6 +84,7 @@ class Spu2 {
   uint16_t effect_l_ = 0, effect_r_ = 0;
   std::vector<uint8_t> ram_;
   IrqCallback irq_;
+  Stats stats_;
 };
 
 }  // namespace lantern::iop

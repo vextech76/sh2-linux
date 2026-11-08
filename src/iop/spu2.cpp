@@ -109,6 +109,7 @@ void Spu2::set_reg(Core& core, uint32_t off, uint16_t value) {
 void Spu2::key_on(Core& core, uint32_t bits) {
   for (int v = 0; v < kVoices; ++v) {
     if (!(bits & (1u << v))) continue;
+    ++stats_.key_ons;
     Voice& voice = core.voices[static_cast<size_t>(v)];
     voice.active = true;
     voice.nax = voice.ssa;
@@ -121,6 +122,7 @@ void Spu2::key_on(Core& core, uint32_t bits) {
 }
 
 void Spu2::voice_end(Core& core, int index) {
+  ++stats_.voice_ends;
   Voice& voice = core.voices[static_cast<size_t>(index)];
   voice.active = false;
   core.endx |= static_cast<uint16_t>(1u << index);
@@ -134,6 +136,7 @@ void Spu2::key_off(Core& core, uint32_t bits) {
 }
 
 void Spu2::decode_block(Voice& voice) {
+  ++stats_.decoded_blocks;
   const uint32_t addr = (voice.nax * 8) % kRamSize;
   const uint8_t hdr = ram_[addr];
   const uint8_t flags = ram_[(addr + 1) % kRamSize];
@@ -198,6 +201,7 @@ void Spu2::mix(int16_t* out, uint32_t frames) {
       const int16_t r = clamp16((right * static_cast<int32_t>(master_r_)) >> 15);
       out[f * 2] = clamp16(out[f * 2] + l);
       out[f * 2 + 1] = clamp16(out[f * 2 + 1] + r);
+      if (l || r) ++stats_.nonzero_frames;
     }
   }
 }
