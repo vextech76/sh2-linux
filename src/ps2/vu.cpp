@@ -53,6 +53,9 @@ void Vu1::start(uint32_t addr) {
   recent_pos_ = 0;
 
   const uint32_t entry = tpc_;
+  static const long trace_n = std::getenv("LANTERN_VU1_PCTRACE") ? std::atol(std::getenv("LANTERN_VU1_PCTRACE")) : 0;
+  if (trace_n > 0 && stats_.microprograms <= 6)
+    log::info(kLog, "program {} entry 0x{:04x}", stats_.microprograms, entry);
   uint64_t budget = kStepBudget;
   while (running_) {
     if (budget-- == 0) {
@@ -85,6 +88,16 @@ void Vu1::step() {
   decode_fields();
 
   if (hi_ & (kUpperD | kUpperT)) log::warn(kLog, "VU1 debug break at 0x{:04x} ignored", (tpc_ - 8) & kMicroMask);
+
+  // Diagnostic instruction trace: LANTERN_VU1_PCTRACE=N logs N instructions per program for the
+  // first programs (enough to see where a microprogram diverges).
+  static const long trace_n = std::getenv("LANTERN_VU1_PCTRACE") ? std::atol(std::getenv("LANTERN_VU1_PCTRACE")) : 0;
+  static long traced = 0;
+  if (trace_n > 0 && traced < trace_n && stats_.microprograms <= 6) {
+    ++traced;
+    log::info(kLog, "  {:04x} up {:02x}(fn {:02x}) lo {:08x} hi {:08x}{}", (tpc_ - 8) & kMicroMask, op_hi_, fd_, lo_,
+              hi_, (hi_ & kUpperE) ? " E" : "");
+  }
 
   if (hi_ & kUpperI)
     i_ = lo_;  // the I bit loads the lower half into I instead of running it
@@ -602,6 +615,27 @@ void Vu1::exec_lower() {
   }
 
   const uint32_t sub = lo_ & 0x3F, fn = (lo_ >> 6) & 0x1F;
+  // LowerOP integer forms live at sub-opcodes 0x30..0x35 (the same block as the T3 tables).
+  if (sub == 0x30 || sub == 0x31 || sub == 0x34 || sub == 0x35) {  // IADD, ISUB, IAND, IOR
+    if (id_ == 0) return;
+    const uint16_t a = vi_[is_], b = vi_[it_];
+    if (sub == 0x30)
+      vi_[id_] = static_cast<uint16_t>(a + b);
+    else if (sub == 0x31)
+      vi_[id_] = static_cast<uint16_t>(a - b);
+    else if (sub == 0x34)
+      vi_[id_] = static_cast<uint16_t>(a & b);
+    else
+      vi_[id_] = static_cast<uint16_t>(a | b);
+    return;
+  }
+  if (sub == 0x32) {  // IADDI: 5-bit signed immediate in bits 6..10
+    if (it_ == 0) return;
+    int32_t imm5 = static_cast<int32_t>((lo_ >> 6) & 0x1F);
+    if (imm5 & 0x10) imm5 -= 32;
+    vi_[it_] = static_cast<uint16_t>(vi_[is_] + imm5);
+    return;
+  }
   if (sub >= 0x3C) {
     const int table = static_cast<int>(sub - 0x3C);
     auto qword_load = [&](uint32_t qaddr) {

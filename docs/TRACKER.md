@@ -15,7 +15,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-8 | Analysis: EE ELF parse, function/syscall/IRX/VU inventory | done | | See docs/ANALYSIS.md; overlays confirmed |
 | LAN-9 | Recompiler: R5900 → C++ | done | | 514,628 insns; 14 runtime-trap sites; differential tests |
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
-| LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; VU1 micro-mode interpreter written (opt-in, `LANTERN_VU1`), still tripping illegal encodings on the game's microcode |
+| LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; VU1 micro-mode interpreter runs the game's microcode (0 illegal encodings) and feeds GIF PATH1: 269k XGKICKs and 679k GS primitives in a 140 s run (was ~7k) |
 | LAN-12 | SPU2 audio, IPU FMV | in_progress | | IPU/MPEG-2 decode works (157k macroblocks, 0 VLC errors); the FMV video track plays past the old 9,001-macroblock audio-starve stall |
 | LAN-22 | Memory card model + mcserv protocol (info path) | done | | game detects a formatted 8184 KB card |
 | LAN-27 | Title screen ignores input (menu unreachable) | done | | root cause: continuation semantics (see LAN-39, docs/TITLE-TRACE.md) |
@@ -46,7 +46,8 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-42 | FMV stalls after 9,001 macroblocks | done | | root cause: the movie's audio ring (0x1211dc0) was never drained because the SDRDRV stream-position RPC answered zero; SDRDRV.IRX is now loaded and the position query is answered by a marked placeholder (FMV audio silent) |
 | LAN-43 | IOP: load SDRDRV.IRX (movie stream/audio driver, SID 0x80000701) | done | | the movie player binds this server; without it every stream call was answered with zeros |
 | LAN-44 | IOP: libthevent for LIBSD (6 unresolved imports) | todo | | LIBSD imports thevent fns 4,5,7,8,9,10; unresolved stubs return early today |
-| LAN-45 | VU1: finish instruction coverage | in_progress | | 64-bit decode, FMAC/int/mem/branch/XGKICK/EFU and flags done + unit tests; the game's programs still reach data regions, so a branch/flag semantic is off. Illegal encodings now stop the microprogram |
+| LAN-45 | VU1: instruction coverage | done | | adding the `LowerOP` integer forms (IADD/ISUB/IADDI/IAND/IOR, sub 0x30-0x35) removed the last illegal encodings (0 in a 140 s run) |
+| LAN-48 | VU1: run concurrently with the EE | todo | | VU1 currently runs to completion inside MSCAL/VIF1; the game's long spin loops hit the 65k-instruction slice guard (~1k times per run) and the EE stalls until the slice ends |
 | LAN-46 | VU0 macro/micro + VIF0 | todo | | VIF0 DMA is a placeholder (9 starts observed); COP2 macro mode via ee/ semantics_vu0 |
 | LAN-47 | SPU2: find why the driver never keys a voice | todo | | stats: 24 key-ons, 264 ends, 0 ADPCM blocks, 0 non-silent frames |
 

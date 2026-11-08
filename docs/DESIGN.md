@@ -488,11 +488,14 @@ clamp to the largest finite value, sticky status bits). `XGKICK` walks the GIF p
 The EE's VU1 windows (`0x11008000` micro, `0x1100C000` data) are routed to the same memory the VIF1
 uploads use, so runtime microcode patches are visible.
 
-Status: unit-tested (arithmetic, LQ/SQ, branch delay, E-bit, illegal encoding) and it executes the
-game's microprograms, but the game's larger programs still walk into constant tables, i.e. one of
-the branch/flag semantics differs from the hardware. Because of that the interpreter is opt-in
-(`LANTERN_VU1`) and the default path is unchanged. Illegal encodings stop the microprogram (the
-hardware trap) rather than executing garbage.
+Status: enabled by default (`LANTERN_NO_VU1` disables it). It runs the game's microprograms with
+**zero illegal encodings** and produces real geometry: 269k `XGKICK`s and 679k GS primitives in a
+140 s run, against ~7k primitives from the EE-side path alone, while the FMV still decodes.
+
+Remaining limitation: VU1 runs to completion inside `MSCAL`/`MSCNT`, synchronously with the EE.
+Some of the game's microprograms are long spin loops that only end when the EE (or the GIF) has
+moved on, so a 65k-instruction slice guard stops them and the game resumes them with `MSCNT`
+(~1k times per run). A cycle-sliced VU1 that runs alongside the EE is the next step (LAN-48).
 
 Not yet: a real IOP interrupt context, complete VU1 coverage, VU0/VIF0, and verified audio output
 with keyed-on voices. LAN-38, LAN-40, LAN-45..47 and the Stage 8/10 items.

@@ -448,7 +448,7 @@ int main(int argc, char** argv) {
   // The VU1 interpreter is opt-in while its instruction coverage is completed: when enabled it
   // runs the game's microprograms and feeds GIF PATH1, but some encodings are still rejected, so
   // the default keeps the proven EE-side path.
-  const bool vu1_enabled = std::getenv("LANTERN_VU1") != nullptr;
+  const bool vu1_enabled = std::getenv("LANTERN_NO_VU1") == nullptr;
   if (vu1_enabled) {
     vu1cpu.set_xgkick([&](const uint8_t* qwords, uint32_t count) { gif_path1.process(qwords, count); });
     vu1cpu.set_vif_tops([&] { return vif1.top(); }, [&] { return vif1.itop(); });
@@ -465,9 +465,10 @@ int main(int argc, char** argv) {
           }
         }
       }
+      if (std::getenv("LANTERN_MPG_TRACE")) log::info("vu1", "start 0x{:x} (tpc was 0x{:x})", addr, vu1cpu.pc());
       vu1cpu.start(addr);
     });
-    log::info("vu1", "VU1 micro-mode interpreter enabled (experimental)");
+    log::info("vu1", "VU1 micro-mode interpreter enabled");
   }
   hw.set_gs(gs.get());
   hw.set_vu1_memory(vu1mem.get());
