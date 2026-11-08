@@ -13,6 +13,7 @@ class Gs;
 namespace lantern::ps2 {
 
 class Ipu;
+struct Vu1Memory;
 
 // EE-side hardware registers (0x10000000-0x1000FFFF) and GS privileged registers
 // (0x12000000-0x12001FFF). Models only what boot needs; everything else is stored and
@@ -33,6 +34,10 @@ class Hardware {
   // IPU registers/FIFOs and DMA channels 3/4 are routed to it; those channels complete
   // asynchronously through dma_done().
   void set_ipu(Ipu* ipu) { ipu_ = ipu; }
+  // VU1 micro/data memory windows (0x11008000/0x1100C000): the EE patches microcode and reads
+  // back data memory through them.
+  void set_vu1_memory(Vu1Memory* m) { vu1_ = m; }
+  uint64_t vu1_writes() const { return vu1_writes_; }
   void set_pc_source(std::function<uint32_t()> fn) { pc_source_ = std::move(fn); }  // diagnostics
   void dma_done(int channel);
   uint32_t dma_reg(uint32_t addr) const {
@@ -44,7 +49,8 @@ class Hardware {
   void set_gs_imr(uint32_t imr);
 
   bool handles(uint32_t addr) const {
-    return (addr >= 0x10000000 && addr < 0x10010000) || (addr >= 0x12000000 && addr < 0x12002000);
+    return (addr >= 0x10000000 && addr < 0x10010000) || (addr >= 0x12000000 && addr < 0x12002000) ||
+           (addr >= 0x11008000 && addr < 0x11010000);  // VU1 micro + data memory
   }
   void read(uint32_t addr, void* out, unsigned size);
   void write(uint32_t addr, const void* in, unsigned size);
@@ -86,6 +92,8 @@ class Hardware {
   std::function<bool(int)> dma_hook_;
   gs::Gs* gs_ = nullptr;
   Ipu* ipu_ = nullptr;
+  Vu1Memory* vu1_ = nullptr;
+  uint64_t vu1_writes_ = 0;
   std::function<uint32_t()> pc_source_;
   uint32_t async_active_ = 0;  // DMA channels still running (bit per channel)
   std::map<uint32_t, uint32_t> regs_;

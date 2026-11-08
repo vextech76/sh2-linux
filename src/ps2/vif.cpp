@@ -1,5 +1,6 @@
 #include "ps2/vif.h"
 
+#include <cstdlib>
 #include <cstring>
 
 #include "core/log.h"
@@ -58,6 +59,9 @@ void Vif1::begin(uint32_t code) {
       top_ = tops_;
       tops_ = tops_ == base_ ? base_ + ofst_ : base_;
       ++stats_.vu1_starts;
+      if (std::getenv("LANTERN_MPG_TRACE"))
+        log::info(kSub, "VU1 start cmd 0x{:02x} word 0x{:08x} num {} imm 0x{:x} top 0x{:x} itop 0x{:x}", cmd_, code,
+                  num_, imm_, tops_, itop_);
       if (start_) start_(cmd_ == 0x17 ? 0xFFFFFFFFu : imm_ * 8);
       break;
     }
@@ -105,6 +109,7 @@ void Vif1::feed(const uint32_t* w, size_t count) {
           std::memcpy(&vu_.micro[at], &buf_[p * 2], 8);
         }
         stats_.mpg_pairs += pairs;
+        if (std::getenv("LANTERN_MPG_TRACE")) log::info(kSub, "MPG {} pairs at micro 0x{:x}", pairs, imm_ * 8);
         break;
       }
       case 0x50:

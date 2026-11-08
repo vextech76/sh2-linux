@@ -31,6 +31,7 @@ lantern_test(test_irx lantern_iop)
 lantern_test(test_hle lantern_iop)
 lantern_test(test_iop_threads lantern_iop)
 lantern_test(test_spu2 lantern_iop)
+lantern_test(test_vu lantern_ps2)
 lantern_test(test_ipu lantern_ps2)
 lantern_test(test_gs lantern_ps2)
 

@@ -7,6 +7,7 @@
 #include "core/log.h"
 #include "gs/gs.h"
 #include "ps2/ipu.h"
+#include "ps2/vif.h"
 
 namespace lantern::ps2 {
 namespace {
@@ -102,6 +103,13 @@ uint32_t Hardware::read32(uint32_t a) {
 }
 
 uint32_t Hardware::read32_impl(uint32_t a) {
+  if (a >= 0x11008000 && a < 0x11010000 && vu1_) {
+    const uint32_t off = a & 0x3FFF;
+    const uint8_t* base = a < 0x1100C000 ? vu1_->micro.data() : vu1_->data.data();
+    uint32_t v;
+    std::memcpy(&v, base + off, 4);
+    return v;
+  }
   if (a >= 0x10000000 && a < 0x10002000) {
     const int t = static_cast<int>((a - 0x10000000) / 0x800);
     switch (a & 0x7FF) {
@@ -134,6 +142,13 @@ uint32_t Hardware::read32_impl(uint32_t a) {
 
 void Hardware::write32(uint32_t a, uint32_t v) {
   hw_trace("W", a, v, ipu_, pc_source_ ? pc_source_() : 0);
+  if (a >= 0x11008000 && a < 0x11010000 && vu1_) {
+    const uint32_t off = a & 0x3FFF;
+    uint8_t* base = a < 0x1100C000 ? vu1_->micro.data() : vu1_->data.data();
+    std::memcpy(base + off, &v, 4);
+    ++vu1_writes_;
+    return;
+  }
   if (a >= 0x10000000 && a < 0x10002000) {
     const int t = static_cast<int>((a - 0x10000000) / 0x800);
     switch (a & 0x7FF) {

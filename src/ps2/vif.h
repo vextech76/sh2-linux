@@ -34,6 +34,10 @@ class Vif1 {
   };
   const Stats& stats() const { return stats_; }
 
+  // TOP/ITOP as XTOP/XITOP in VU1 microcode see them.
+  uint16_t top() const { return static_cast<uint16_t>(tops_ & 0x3FF); }
+  uint16_t itop() const { return static_cast<uint16_t>(itop_ & 0x3FF); }
+
  private:
   void begin(uint32_t code);
   void unpack_word_stream();

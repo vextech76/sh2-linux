@@ -39,6 +39,7 @@
 #include "ps2/ipu.h"
 #include "ps2/kernel.h"
 #include "ps2/vif.h"
+#include "ps2/vu.h"
 #include "render/renderer.h"
 
 namespace fs = std::filesystem;
@@ -62,6 +63,7 @@ iop::McService* g_mc = nullptr;
 iop::PadService* g_pad = nullptr;
 gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
+ps2::Vu1* g_vu1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
 ps2::Ipu* g_ipu = nullptr;
 iop::Spu2* g_spu2 = nullptr;
@@ -225,11 +227,18 @@ struct Report {
     }
     if (g_vif1) {
       const auto& v = g_vif1->stats();
-      r += std::format(
-          "VIF1: {} unpacked qwords, {} DIRECT qwords, {} MPG pairs, {} VU1 starts (PLACEHOLDER: VU1 not executed)\n  "
-          "codes:",
-          v.unpacked_qwords, v.direct_qwords, v.mpg_pairs, v.vu1_starts);
+      r += std::format("VIF1: {} unpacked qwords, {} DIRECT qwords, {} MPG pairs, {} VU1 starts; codes:",
+                       v.unpacked_qwords, v.direct_qwords, v.mpg_pairs, v.vu1_starts);
       for (const auto& [c, n] : v.commands) r += std::format(" {:02x}:{}", c, n);
+      if (g_vu1) {
+        const auto& u = g_vu1->stats();
+        r += std::format(
+            "\nVU1: {} microprograms, {} instructions, {} XGKICKs, {} unknown opcodes, {} programs stopped by the "
+            "step guard",
+            u.microprograms, u.instructions, u.xgkicks, u.unknown, u.faults);
+        for (const auto& [op, count] : u.unknown_ops) r += std::format("  unknown[{:04x}]:{}", op, count);
+        r += "\n";
+      }
       r += "\n";
     }
     if (g_mc) {
@@ -432,23 +441,36 @@ int main(int argc, char** argv) {
   // Graphics: GS + GIF paths, VIF1 + VU1 memory, DMA controller.
   gs::LocalMemory::set_indexed_variant(swizzle_t8, swizzle_t4);
   auto gs = std::make_unique<gs::Gs>();
-  gs::Gif gif_path2(*gs), gif_path3(*gs);
-  auto vu1 = std::make_unique<ps2::Vu1Memory>();
-  ps2::Vif1 vif1(*vu1, gif_path2);
-  vif1.set_vu1_start([&](uint32_t addr) {
-    // Diagnostic: dump the uploaded VU1 microprogram (never committed; game-derived data).
-    static bool dumped = false;
-    if (dumped) return;
-    const char* path = std::getenv("LANTERN_VU1_DUMP");
-    if (!path) return;
-    dumped = true;
-    if (FILE* f = std::fopen(path, "wb")) {
-      std::fwrite(vu1->micro.data(), 1, vu1->micro.size(), f);
-      std::fclose(f);
-      log::info("vu1", "dumped VU1 micro memory at MSCAL 0x{:x}", addr);
-    }
-  });
+  gs::Gif gif_path2(*gs), gif_path3(*gs), gif_path1(*gs);
+  auto vu1mem = std::make_unique<ps2::Vu1Memory>();
+  ps2::Vif1 vif1(*vu1mem, gif_path2);
+  ps2::Vu1 vu1cpu(*vu1mem);
+  // The VU1 interpreter is opt-in while its instruction coverage is completed: when enabled it
+  // runs the game's microprograms and feeds GIF PATH1, but some encodings are still rejected, so
+  // the default keeps the proven EE-side path.
+  const bool vu1_enabled = std::getenv("LANTERN_VU1") != nullptr;
+  if (vu1_enabled) {
+    vu1cpu.set_xgkick([&](const uint8_t* qwords, uint32_t count) { gif_path1.process(qwords, count); });
+    vu1cpu.set_vif_tops([&] { return vif1.top(); }, [&] { return vif1.itop(); });
+    vif1.set_vu1_start([&](uint32_t addr) {
+      // Diagnostic: dump the uploaded VU1 microprogram (never committed; game-derived data).
+      static bool dumped = false;
+      if (!dumped) {
+        if (const char* path = std::getenv("LANTERN_VU1_DUMP")) {
+          dumped = true;
+          if (FILE* f = std::fopen(path, "wb")) {
+            std::fwrite(vu1mem->micro.data(), 1, vu1mem->micro.size(), f);
+            std::fclose(f);
+            log::info("vu1", "dumped VU1 micro memory at MSCAL 0x{:x}", addr);
+          }
+        }
+      }
+      vu1cpu.start(addr);
+    });
+    log::info("vu1", "VU1 micro-mode interpreter enabled (experimental)");
+  }
   hw.set_gs(gs.get());
+  hw.set_vu1_memory(vu1mem.get());
   gs::Rasterizer raster;
   gs->set_rasterizer([&](gs::Gs& g, const gs::Vertex* v, int n, uint64_t prim) { raster.draw(g, v, n, prim); });
   g_raster = &raster;
@@ -467,6 +489,7 @@ int main(int argc, char** argv) {
   g_ipu = &ipu;
   g_gs = gs.get();
   g_vif1 = &vif1;
+  g_vu1 = vu1_enabled ? &vu1cpu : nullptr;
 
   recomp::Runtime rt;
   reg(rt);

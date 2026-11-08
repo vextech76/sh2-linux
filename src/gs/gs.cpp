@@ -434,3 +434,33 @@ void Gif::process(const uint8_t* q, uint32_t count) {
 }
 
 }  // namespace lantern::gs
+
+namespace lantern::gs {
+
+uint32_t gif_packet_qwords(const uint8_t* mem, uint32_t size, uint32_t addr) {
+  // A GIF packet is a chain of tags: each tag is one quadword and is followed by
+  // NLOOP * NREGS quadwords of data (PACKED/REGLIST) or NLOOP quadwords (IMAGE). The packet ends
+  // after the tag whose EOP bit is set.
+  uint32_t total = 0;
+  const uint32_t mask = size - 1;
+  for (;;) {
+    if (total > 1u << 20) return 0;  // runaway guard
+    const uint32_t a = (addr + total * 16u) & mask;
+    uint64_t tag;
+    std::memcpy(&tag, mem + a, 8);
+    const uint32_t nloop = static_cast<uint32_t>(bits(tag, 0, 15));
+    const bool eop = bits(tag, 15, 1) != 0;
+    uint64_t hi;
+    std::memcpy(&hi, mem + ((a + 8) & mask), 8);
+    const uint32_t nreg = static_cast<uint32_t>(bits(hi, 28, 4)) ? static_cast<uint32_t>(bits(hi, 28, 4)) : 16;
+    const uint32_t flg = static_cast<uint32_t>(bits(hi, 26, 2));
+    total += 1;  // the tag itself
+    if (nloop) total += (flg >= 2) ? nloop : nloop * nreg;
+    if (eop || nloop == 0) {
+      if (eop) return total;
+      // A tag with NLOOP = 0 and no EOP is a no-op; continue with the next tag.
+    }
+  }
+}
+
+}  // namespace lantern::gs

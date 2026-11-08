@@ -113,4 +113,8 @@ class Gif {
   uint64_t packets_ = 0;
 };
 
+// Quadwords in the GIF packet that starts at `addr` in a circular buffer of `size` bytes,
+// counting the GIFtag and data of every tag up to and including the one with EOP set.
+uint32_t gif_packet_qwords(const uint8_t* mem, uint32_t size, uint32_t addr);
+
 }  // namespace lantern::gs
