@@ -16,7 +16,7 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-9 | Recompiler: R5900 → C++ | done | | 514,628 insns; 14 runtime-trap sites; differential tests |
 | LAN-10 | HLE kernel + SIF + IOP pad/cdvd/memcard | done | | kernel, SIF, CDVD, LOADFILE, IOP heap; boot reaches the render loop |
 | LAN-11 | VU1 + GS → Vulkan | in_progress | | DMAC/VIF1/GIF/GS + software rasterizer done; first frame rendered |
-| LAN-12 | SPU2 audio, IPU FMV | todo | | |
+| LAN-12 | SPU2 audio, IPU FMV | in_progress | | IPU/MPEG-2 decode works (157k macroblocks, 0 VLC errors); the FMV video track plays past the old 9,001-macroblock audio-starve stall |
 | LAN-22 | Memory card model + mcserv protocol (info path) | done | | game detects a formatted 8184 KB card |
 | LAN-27 | Title screen ignores input (menu unreachable) | done | | root cause: continuation semantics (see LAN-39, docs/TITLE-TRACE.md) |
 | LAN-30 | Guest tracing tools (hot PCs, pad read watch, stack walk) | done | | |
@@ -41,7 +41,11 @@ Parent epic **LAN-0**: SH2 Linux port (plan: `docs/plans/lantern-sh2-port_4ba54e
 | LAN-14 | Remove wrongly installed `volk-devel` (GNU Radio) | todo | | Owner action: `sudo dnf remove volk-devel` |
 | LAN-15 | MGF archive format analysis | todo | | |
 | LAN-16 | R3000A interpreter + IOP kernel-library HLE (for game sound modules) | todo | | Decision D-6.1 |
-| LAN-17 | SPU2 register-level emulation | todo | | |
+| LAN-17 | SPU2 register-level emulation | done | | voices/ADPCM/DMA + SDL3 output; mixer is silent until a voice is keyed on |
+| LAN-41 | IPU/MPEG-2 decoder (FMV video) | done | | ISO 13818-2 VLC/IDCT/CSC; PES demuxer + ring pump; see docs/DESIGN.md §IPU |
+| LAN-42 | FMV stalls after 9,001 macroblocks | done | | root cause: the movie's audio ring (0x1211dc0) was never drained because the SDRDRV stream-position RPC answered zero; SDRDRV.IRX is now loaded and the position query is answered by a marked placeholder (FMV audio silent) |
+| LAN-43 | IOP: load SDRDRV.IRX (movie stream/audio driver, SID 0x80000701) | done | | the movie player binds this server; without it every stream call was answered with zeros |
+| LAN-44 | IOP: libthevent for LIBSD (6 unresolved imports) | todo | | LIBSD imports thevent fns 4,5,7,8,9,10; unresolved stubs return early today |
 
 ## [NEXT]
 - LAN-24: verify the T4 in-block order on a screen that exercises 4-bit textures

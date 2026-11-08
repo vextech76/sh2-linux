@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <cstring>
 #include <memory>
 
 #include "iop/sif_hle.h"
@@ -70,6 +71,34 @@ TEST_CASE("bind + call round trip through a registered server") {
   CHECK(seen_args[0] == 0x44);
   CHECK(r.ee->read<uint32_t>(kEeReply) == 0xDDCCBBAAu);
   CHECK(r.sif.stats().calls.at({0x12345, 3}) == 1);
+}
+
+TEST_CASE("an RPC intercept answers before any real IOP module or HLE server") {
+  Rig r;
+  r.send({20, 0, kInitCmd, 0, kEeRecv});
+  bool server_called = false;
+  r.sif.register_server(0x80000701, "stream", [&](RpcCall&) { server_called = true; });
+  r.sif.set_rpc_intercept([&](const RpcCall& c, std::vector<uint8_t>& reply) {
+    if (c.sid != 0x80000701 || (c.fno & 0xFFF0u) != 0x8100) return false;
+    reply.assign(c.recv_size, 0);
+    const uint32_t value = 0x4C4B4A49;
+    std::memcpy(reply.data(), &value, 4);
+    return true;
+  });
+  r.send({36, 0, kRpcBind, 0, 1, 0x1000, 7, 0x00400000, 0x80000701});
+  REQUIRE(r.sif.deliver_one());
+  const uint32_t server = r.reply(9);
+  r.send({56, 0, kRpcCall, 0, 1, 0x1000, 8, 0x00400000, 0x8104, 0, kEeReply, 4, 0, server});
+  REQUIRE(r.sif.deliver_one());
+  CHECK(r.ee->read<uint32_t>(kEeReply) == 0x4C4B4A49u);
+  CHECK_FALSE(server_called);
+  CHECK(r.sif.stats().intercepted_calls == 1);
+
+  // A different function number falls through to the registered server.
+  r.send({56, 0, kRpcCall, 0, 1, 0x1000, 8, 0x00400000, 0x8000, 0, kEeReply, 4, 0, server});
+  REQUIRE(r.sif.deliver_one());
+  CHECK(server_called);
+  CHECK(r.ee->read<uint32_t>(kEeReply) == 0);
 }
 
 TEST_CASE("unknown servers bind and answer with zeros (recorded as placeholders)") {

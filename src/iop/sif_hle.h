@@ -54,6 +54,10 @@ class SifHle final : public ps2::SifEndpoint {
   void set_iop(IopRuntime* iop) { iop_ = iop; }
   // Answer otherwise-unserved sound-driver RPCs with "ready" (PLACEHOLDER: no audio output).
   void set_sound_placeholder(bool on) { placeholder_ = on; }
+  // Host hook consulted before an RPC is forwarded to a real IOP module. It returns true when it
+  // produced a reply (used for services the emulated IOP cannot yet provide).
+  using RpcIntercept = std::function<bool(const RpcCall& call, std::vector<uint8_t>& reply)>;
+  void set_rpc_intercept(RpcIntercept fn) { intercept_ = std::move(fn); }
   void register_server(uint32_t sid, std::string name, RpcServer fn) {
     servers_[sid] = {std::move(name), std::move(fn)};
   }
@@ -67,6 +71,7 @@ class SifHle final : public ps2::SifEndpoint {
     std::map<std::pair<uint32_t, uint32_t>, uint64_t> calls;  // (sid, fno) -> count
     std::map<uint32_t, uint64_t> placeholder_calls;           // sid -> calls answered with zeros
     std::map<uint32_t, uint64_t> real_calls;                  // sid -> calls served by a real IOP module
+    uint64_t intercepted_calls = 0;                           // calls answered by the host RPC intercept
     uint64_t real_failures = 0;
     uint64_t replies = 0;
   };
@@ -98,6 +103,7 @@ class SifHle final : public ps2::SifEndpoint {
   uint32_t next_handle_ = 0x00180000;
   Stats stats_;
   std::function<void()> reset_hook_;
+  RpcIntercept intercept_;
   IopRuntime* iop_ = nullptr;
   bool placeholder_ = true;
 };

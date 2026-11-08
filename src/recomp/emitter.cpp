@@ -120,7 +120,7 @@ struct FunctionEmitter {
   void emit() {
     // Label targets first: every intra-function branch/jump target and post-call continuation.
     for (uint32_t pc = fn.start; pc < fn.end; pc += 4) {
-      Insn in = ee::decode(img.at(pc), pc);
+      Insn in = ee::decode_exec(img.at(pc), pc);
       if (!in.has(ee::kDelay)) continue;
       labels.insert(pc + 8);
       if ((in.has(ee::kBranch) || in.op == Op::J) && inside(in.target)) labels.insert(in.target);
@@ -133,7 +133,7 @@ struct FunctionEmitter {
     out.clear();
     for (uint32_t pc = fn.start; pc < fn.end;) {
       if (labels.contains(pc)) out += std::format("L_{:08x}:\n", pc);
-      Insn in = ee::decode(img.at(pc), pc);
+      Insn in = ee::decode_exec(img.at(pc), pc);
       if (!in.has(ee::kDelay)) {
         if (in.op == Op::ERET || !in.valid()) {
           ++stats.instructions;
@@ -147,7 +147,7 @@ struct FunctionEmitter {
         continue;
       }
       ++stats.instructions;
-      const Insn slot = ee::decode(pc + 4 < img.end() ? img.at(pc + 4) : 0, pc + 4);
+      const Insn slot = ee::decode_exec(pc + 4 < img.end() ? img.at(pc + 4) : 0, pc + 4);
       if (slot.has(ee::kDelay)) {
         line(std::format("throw ee::GuestTrap(0x{:08x}u, \"control transfer in a delay slot\");", pc + 4));
         pc += 8;

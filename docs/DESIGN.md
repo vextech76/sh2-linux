@@ -438,7 +438,43 @@ kernel follows continuations at the top level of threads/handlers (`Kernel::run_
 That was the real title→menu blocker: Start now opens the difficulty menu. See
 `docs/TITLE-TRACE.md`.
 
-Not yet: a real IOP interrupt context, VU1/IPU execution, and verified audio output with keyed-on
+### 9.7 IPU: MPEG-2 macroblock decoder and the FMV path ✅
+
+`src/ps2/ipu.*` decodes the movie's MPEG-2 bitstream: the VLC tables in `mpeg_tables.h` follow
+ISO/IEC 13818-2 Annex B (B.14/B.15 DCT coefficient tables, B.9 coded-block-pattern, B.12/B.13
+DC sizes, B.3/B.4/B.5 macroblock types, B.10/B.11 motion codes), so no emulator source was copied.
+Commands implemented: `BCLR`, `IDEC`, `BDEC`, `VDEC`, `FDEC`, `SETIQ`, `SETVQ`, `SETTH` and `CSC`
+(unchanged-length passthrough) plus the output FIFO/`IPU_FROM` path; input arrives lazily from
+`IPU_TO` (DMA channel 4) and a command that runs out of bits stays busy until more data is pulled,
+which is what the game's own library expects.
+
+The rest of the movie path is the game's code (Sony's PSS demuxer and ring library):
+
+- `0x20d660` demuxes a chunk of the file ring and dispatches each PES packet to a registered
+  consumer: `0x2a3a60` copies the video elementary stream into the IPU ring (`0x1211e40`) and
+  `0x2a3bb0` copies the audio stream into the sound ring (`0x1211dc0`).
+- The IPU ring is fed to DMA4 in whole 0x800-byte blocks by `0x2a4620`; the decode thread
+  (`0x2a5610`) submits one picture at a time through `0x20e518`.
+- The sound ring is drained by the EE's own pump (`0x29ffc0`, called once per frame from
+  `0x2a3a30`), which asks the sound driver (SDRDRV, SIF SID `0x80000701`) for the IOP's current
+  stream position and copies the difference into the SIF DMA buffer.
+
+Because the demuxer serialises the two tracks, a stalled audio consumer stops the video too. The
+first symptom was a reproducible stop after exactly 9,001 macroblocks with 784 bytes of the IPU
+ring pending: the demuxer could not advance past an audio packet whose ring was full.
+
+Two fixes: `SDRDRV.IRX` is now actually loaded on the IOP (it registers SID `0x80000701`, which the
+movie player binds), and the stream-position query it answers with zero is replaced by a **marked
+PLACEHOLDER** in `boot_main.cpp` via `SifHle::set_rpc_intercept`: the reply reports a position
+4096 bytes ahead of the guest's own ring write pointer, i.e. the ring drains at the nominal
+48 kHz/16-bit stereo frame rate. Consequence: the FMV video plays (157k macroblocks, 32 sequence
+headers, 0 VLC errors in a 120 s run) and **FMV audio is silent** until the sound-driver streaming
+path is implemented (LAN-12, LAN-44).
+
+The decoder also exports a compact stall summary (`describe()`, `LANTERN_IPU_SUMMARY`) that names
+the macroblock, block, coded-block-pattern and bit position where a `BDEC` ran out of input.
+
+Not yet: a real IOP interrupt context, VU1 execution, and verified audio output with keyed-on
 voices. LAN-38, LAN-40 and the Stage 8/10 items.
 
 ## 9. Known limitations / risks

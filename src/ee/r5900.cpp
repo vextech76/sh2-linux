@@ -323,7 +323,8 @@ bool Insn::always_taken() const {
   return (op == Op::BEQ && rs == 0 && rt == 0) || (op == Op::BGEZ && rs == 0) || (op == Op::BGEZAL && rs == 0);
 }
 
-Insn decode(uint32_t w, uint32_t pc) {
+namespace {
+Insn decode_impl(uint32_t w, uint32_t pc, bool exec) {
   Insn in;
   in.word = w;
   in.pc = pc;
@@ -345,13 +346,24 @@ Insn decode(uint32_t w, uint32_t pc) {
     case 28: in.op = mmi(w); break;
     default: in.op = kPrimary[opcode]; break;
   }
-  if (!reserved_fields_ok(in, opcode)) in.op = Op::Invalid;
+  if (!reserved_fields_ok(in, opcode)) {
+    // The CPU ignores the rs field of shift-by-immediate instructions. Games rely on that when
+    // execution falls through constant tables (sceMpeg's RAW16->RAW8 routine runs 0x00ff00ff
+    // words as `dsra32 zero,ra,3` before its jr ra), so execution accepts what strict decoding
+    // (and disassembly) rejects.
+    const bool ignored_rs = exec && kOps[static_cast<size_t>(in.op)].fmt == Fmt::RdRtSa && opcode == 0;
+    if (!ignored_rs) in.op = Op::Invalid;
+  }
   in.flags = kOps[static_cast<size_t>(in.op)].flags;
   if (in.has(kBranch)) in.target = pc + 4 + static_cast<uint32_t>(static_cast<int32_t>(in.simm) * 4);
   if (in.has(kJump)) in.target = ((pc + 4) & 0xF0000000u) | ((w & 0x03FFFFFFu) << 2);
   if (in.always_taken()) in.flags |= kEnd;
   return in;
 }
+}  // namespace
+
+Insn decode(uint32_t w, uint32_t pc) { return decode_impl(w, pc, false); }
+Insn decode_exec(uint32_t w, uint32_t pc) { return decode_impl(w, pc, true); }
 
 int written_gpr(const Insn& in) {
   if (!in.valid()) return -1;

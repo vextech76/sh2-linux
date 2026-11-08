@@ -12,6 +12,8 @@ class Gs;
 
 namespace lantern::ps2 {
 
+class Ipu;
+
 // EE-side hardware registers (0x10000000-0x1000FFFF) and GS privileged registers
 // (0x12000000-0x12001FFF). Models only what boot needs; everything else is stored and
 // recorded so the boot report shows exactly which subsystems the game touched.
@@ -28,7 +30,15 @@ class Hardware {
   // performed (otherwise it is logged as a PLACEHOLDER and discarded).
   void set_dma_hook(std::function<bool(int channel)> fn) { dma_hook_ = std::move(fn); }
   void set_gs(gs::Gs* gs) { gs_ = gs; }
-  uint32_t dma_reg(uint32_t addr) { return regs_[addr]; }
+  // IPU registers/FIFOs and DMA channels 3/4 are routed to it; those channels complete
+  // asynchronously through dma_done().
+  void set_ipu(Ipu* ipu) { ipu_ = ipu; }
+  void set_pc_source(std::function<uint32_t()> fn) { pc_source_ = std::move(fn); }  // diagnostics
+  void dma_done(int channel);
+  uint32_t dma_reg(uint32_t addr) const {
+    auto it = regs_.find(addr);
+    return it == regs_.end() ? 0 : it->second;
+  }
   void set_dma_reg(uint32_t addr, uint32_t v) { regs_[addr] = v; }
   bool take_gs_interrupt();
   void set_gs_imr(uint32_t imr);
@@ -63,18 +73,24 @@ class Hardware {
   };
   const std::map<uint32_t, Access>& unmodelled() const { return unmodelled_; }
   const std::map<int, uint64_t>& dma_starts() const { return dma_starts_; }
+  const std::map<uint32_t, uint64_t>& all_reads() const { return all_reads_; }
   static std::string region_name(uint32_t addr);
 
  private:
   uint32_t read32(uint32_t addr);
+  uint32_t read32_impl(uint32_t addr);
   void write32(uint32_t addr, uint32_t v);
   uint32_t timer_count(int t) const;
 
   Clock clock_;
   std::function<bool(int)> dma_hook_;
   gs::Gs* gs_ = nullptr;
+  Ipu* ipu_ = nullptr;
+  std::function<uint32_t()> pc_source_;
+  uint32_t async_active_ = 0;  // DMA channels still running (bit per channel)
   std::map<uint32_t, uint32_t> regs_;
   std::map<uint32_t, Access> unmodelled_;
+  std::map<uint32_t, uint64_t> all_reads_;  // every register read (diagnostics)
   std::map<int, uint64_t> dma_starts_;
   uint32_t intc_stat_ = 0, intc_mask_ = 0, dmac_stat_ = 0, completed_dma_ = 0;
   uint64_t vblanks_ = 0;

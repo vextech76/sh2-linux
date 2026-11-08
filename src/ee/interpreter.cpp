@@ -44,7 +44,7 @@ uint64_t Interpreter::run(Cpu& c, Memory& m, uint32_t stop_pc, uint64_t max_step
   while (c.pc != stop_pc) {
     if (++steps > max_steps) throw GuestTrap(c.pc, "interpreter step budget exhausted");
     const uint32_t pc = c.pc;
-    const Insn in = decode(m.read<uint32_t>(pc), pc);
+    const Insn in = decode_exec(m.read<uint32_t>(pc), pc);
     if (!in.valid()) throw GuestTrap(pc, std::format("invalid instruction 0x{:08x} at 0x{:08x}", in.word, pc));
     if (!in.has(kDelay)) {
       if (in.op == Op::ERET) throw GuestTrap(pc, "ERET outside the HLE kernel");
@@ -64,7 +64,7 @@ uint64_t Interpreter::run(Cpu& c, Memory& m, uint32_t stop_pc, uint64_t max_step
       c.pc = pc + 8;
       continue;
     }
-    const Insn slot = decode(m.read<uint32_t>(pc + 4), pc + 4);
+    const Insn slot = decode_exec(m.read<uint32_t>(pc + 4), pc + 4);
     if (slot.has(kDelay)) throw GuestTrap(pc + 4, "control transfer in a delay slot");
     if (!slot.valid()) throw GuestTrap(pc + 4, std::format("invalid instruction 0x{:08x} in delay slot", slot.word));
     execute_plain(c, m, slot);
@@ -89,7 +89,7 @@ uint32_t Interpreter::run_until_return(Cpu& c, Memory& m, uint64_t* steps_out, u
   for (;;) {
     if (++steps > max_steps) throw GuestTrap(c.pc, "interpreter step budget exhausted");
     const uint32_t pc = c.pc;
-    const Insn in = decode(m.read<uint32_t>(pc), pc);
+    const Insn in = decode_exec(m.read<uint32_t>(pc), pc);
     if (!in.valid()) throw GuestTrap(pc, std::format("invalid instruction 0x{:08x} at 0x{:08x}", in.word, pc));
     if (!in.has(kDelay)) {
       if (in.op == Op::ERET) throw GuestTrap(pc, "ERET outside the HLE kernel");
@@ -108,7 +108,7 @@ uint32_t Interpreter::run_until_return(Cpu& c, Memory& m, uint64_t* steps_out, u
       c.pc = pc + 8;
       continue;
     }
-    const Insn slot = decode(m.read<uint32_t>(pc + 4), pc + 4);
+    const Insn slot = decode_exec(m.read<uint32_t>(pc + 4), pc + 4);
     if (slot.has(kDelay)) throw GuestTrap(pc + 4, "control transfer in a delay slot");
     if (!slot.valid()) throw GuestTrap(pc + 4, std::format("invalid instruction 0x{:08x} in delay slot", slot.word));
     execute_plain(c, m, slot);

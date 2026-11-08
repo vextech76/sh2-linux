@@ -160,9 +160,8 @@ void IopRuntime::start_spu_dma(int core) {
 
 bool IopRuntime::load_sound_modules(const std::filesystem::path& extracted, std::string* error) {
   const std::filesystem::path paths[] = {
-      extracted / "IOP" / "MODULES" / "LIBSD.IRX",
-      extracted / "IOP" / "SOUND" / "SD_CD.IRX",
-      extracted / "IOP" / "SOUND" / "SDSTR.IRX",
+      extracted / "IOP" / "MODULES" / "LIBSD.IRX", extracted / "IOP" / "MODULES" / "SDRDRV.IRX",
+      extracted / "IOP" / "SOUND" / "SD_CD.IRX",   extracted / "IOP" / "SOUND" / "SDSTR.IRX",
       extracted / "IOP" / "SOUND" / "SOUNDCD.IRX",
   };
   for (const auto& path : paths)

@@ -267,3 +267,15 @@ TEST_CASE("run_until_return follows a manual return stack (continuation semantic
   CHECK(m.s(t0) == 3);  // every frame's body executed
   CHECK(m.cpu.r(s6) == kStack + 12);
 }
+
+TEST_CASE("shift-by-immediate with a non-zero rs executes (the CPU ignores rs)") {
+  // 0x00ff00ff = dsra32 zero,ra,3 with rs = 7: strict decoding rejects it (as binutils does), but
+  // the hardware executes it, and sceMpeg falls through such constant words.
+  CHECK_FALSE(decode(0x00FF00FFu, 0).valid());
+  CHECK(decode_exec(0x00FF00FFu, 0).valid());
+  Machine m;
+  m.load({0x00FF00FFu, 0x00FF00FFu, addiu(t0, zero, 5), jr(ra), nop});
+  m.call();
+  CHECK(m.s(t0) == 5);
+  CHECK(m.cpu.r(zero) == 0);
+}

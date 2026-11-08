@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -35,6 +36,7 @@
 #include "platform/sdl_platform.h"
 #include "ps2/boot.h"
 #include "ps2/hardware.h"
+#include "ps2/ipu.h"
 #include "ps2/kernel.h"
 #include "ps2/vif.h"
 #include "render/renderer.h"
@@ -61,6 +63,7 @@ iop::PadService* g_pad = nullptr;
 gs::Rasterizer* g_raster = nullptr;
 ps2::Vif1* g_vif1 = nullptr;
 iop::LoadfileService* g_loadfile = nullptr;
+ps2::Ipu* g_ipu = nullptr;
 std::atomic<int> g_audio_peak{0};
 std::atomic<uint64_t> g_audio_frames{0};
 
@@ -90,7 +93,7 @@ struct Report {
         r += std::format("  thread {} pc=0x{:08x} sp=0x{:08x} ra=0x{:08x} stack return addresses:", t.id, t.pc, t.sp,
                          t.ra);
         int found = 0;
-        for (uint32_t a = t.sp; a < t.sp + 0x1000 && found < 10 && mem; a += 4) {
+        for (uint32_t a = t.sp; a < t.sp + 0x1000 && found < 16 && mem; a += 4) {
           const uint8_t* p = mem->host(a, 4);
           if (!p) break;
           uint32_t v;
@@ -99,17 +102,36 @@ struct Report {
           const uint8_t* q = mem->host(v - 8, 4);
           uint32_t w;
           std::memcpy(&w, q, 4);
-          if ((w >> 26) != 3) continue;  // previous-but-one instruction must be JAL
+          const bool jal = (w >> 26) == 3, jalr = (w >> 26) == 0 && (w & 0x3F) == 9;
+          if (!jal && !jalr) continue;  // previous-but-one instruction must be a call
           r += std::format(" 0x{:08x}", v);
           ++found;
         }
         r += "\n";
+        if (std::getenv("LANTERN_STACK_DUMP") && mem && t.id == std::atoi(std::getenv("LANTERN_STACK_DUMP"))) {
+          r += "    stack:";
+          for (uint32_t k = 0; k < 64; ++k) {
+            const uint8_t* p = mem->host(t.sp + k * 4, 4);
+            if (!p) break;
+            uint32_t v;
+            std::memcpy(&v, p, 4);
+            r += std::format(" {:08x}", v);
+          }
+          r += "\n";
+        }
       }
     }
     if (kernel) {
       std::vector<std::pair<uint64_t, uint32_t>> hot;
       for (const auto& [pc, count] : kernel->pc_histogram()) hot.emplace_back(count, pc);
       std::sort(hot.rbegin(), hot.rend());
+      if (std::getenv("LANTERN_PC_RANGE")) {
+        const uint32_t lo = static_cast<uint32_t>(std::strtoul(std::getenv("LANTERN_PC_RANGE"), nullptr, 16));
+        r += "PCs in range:";
+        for (const auto& [count, pc] : hot)
+          if (pc >= lo && pc < lo + 0x10000) r += std::format(" 0x{:08x}:{}", pc, count);
+        r += "\n";
+      }
       r += "hot guest PCs (sampled at safe points):";
       for (size_t i = 0; i < hot.size() && i < 12; ++i) r += std::format(" 0x{:08x}:{}", hot[i].second, hot[i].first);
       r += "\n";
@@ -130,6 +152,24 @@ struct Report {
       for (const auto& [name, rw] : regions) r += std::format("  {:<16} {}/{}\n", name, rw.first, rw.second);
       for (const auto& [ch, n] : hw->dma_starts())
         r += std::format("  DMA channel {} started {} times (PLACEHOLDER)\n", ch, n);
+      std::vector<std::pair<uint64_t, uint32_t>> busiest;
+      for (const auto& [addr, acc] : hw->unmodelled()) busiest.emplace_back(acc.reads + acc.writes, addr);
+      std::sort(busiest.rbegin(), busiest.rend());
+      {
+        std::vector<std::pair<uint64_t, uint32_t>> reads;
+        for (const auto& [addr, n] : hw->all_reads()) reads.emplace_back(n, addr);
+        std::sort(reads.rbegin(), reads.rend());
+        r += "  most-read registers:";
+        for (size_t i = 0; i < reads.size() && i < 10; ++i)
+          r += std::format(" 0x{:08x}x{}", reads[i].second, reads[i].first);
+        r += "\n";
+      }
+      r += "  busiest unmodelled registers:";
+      for (size_t i = 0; i < busiest.size() && i < 12; ++i) {
+        const auto& acc = hw->unmodelled().at(busiest[i].second);
+        r += std::format(" 0x{:08x}(r{} w{} last 0x{:x})", busiest[i].second, acc.reads, acc.writes, acc.last_value);
+      }
+      r += "\n";
     }
     if (sif) {
       const auto& st = sif->stats();
@@ -145,6 +185,17 @@ struct Report {
       }
     }
     r += std::format("audio: {} frames mixed, peak {}\n", g_audio_frames.load(), g_audio_peak.load());
+    if (g_ipu) {
+      const auto& is = g_ipu->stats();
+      static constexpr const char* kCmd[10] = {"BCLR",  "IDEC",  "BDEC", "VDEC", "FDEC",
+                                               "SETIQ", "SETVQ", "CSC",  "PACK", "SETTH"};
+      r += std::format("IPU: {} macroblocks, {} CSC, {} qwords in, {} out, {} stalls, {} VLC errors; commands:",
+                       is.macroblocks, is.csc_macroblocks, is.input_qwords, is.output_qwords, is.stalls, is.vlc_errors);
+      for (int c = 0; c < 10; ++c)
+        if (is.commands[static_cast<size_t>(c)])
+          r += std::format(" {} x{}", kCmd[c], is.commands[static_cast<size_t>(c)]);
+      r += "\n  " + g_ipu->describe() + "\n";
+    }
     if (g_gs) {
       const auto& g = g_gs->stats();
       r += std::format(
@@ -187,6 +238,30 @@ struct Report {
     if (g_loadfile) {
       r += std::format("IOP modules requested ({}):\n", g_loadfile->modules().size());
       for (const auto& mname : g_loadfile->modules()) r += "  " + mname + "\n";
+    }
+    if (mem && std::getenv("LANTERN_STATE")) {
+      auto w = [&](uint32_t a) {
+        const uint8_t* p = mem->host(a, 4);
+        uint32_t v = 0;
+        if (p) std::memcpy(&v, p, 4);
+        return v;
+      };
+      r += std::format("state: stream 0x{:08x}", w(0x1211940));
+      const uint32_t sh = w(0x1211940);
+      if (sh) {
+        const uint32_t handle = w(sh + 4);
+        r += std::format(" handle 0x{:08x} ring[0] 0x{:x} [4] 0x{:x} [8] 0x{:x}", handle, w(handle + 0x50000),
+                         w(handle + 0x50004), w(handle + 0x50008));
+      }
+      r += std::format("\n  file: handle 0x{:08x} size 0x{:x} offset 0x{:x}\n", w(0x3aab98), w(0x3aab9c), w(0x3aaba0));
+      r += std::format(
+          "  demux: d0 0x{:x} d4 0x{:x} d8 0x{:x} dc 0x{:x} e0 0x{:x} e4 0x{:x} e8 0x{:x} ec 0x{:x} f0 0x{:x} f4 "
+          "0x{:x} fc 0x{:x}\n",
+          w(0x12118d0), w(0x12118d4), w(0x12118d8), w(0x12118dc), w(0x12118e0), w(0x12118e4), w(0x12118e8),
+          w(0x12118ec), w(0x12118f0), w(0x12118f4), w(0x12118fc));
+      r += "  ipu ctx:";
+      for (uint32_t o = 0; o <= 0x48; o += 4) r += std::format(" {:02x}:{:x}", o, w(0x1211e40 + o));
+      r += "\n";
     }
     if (g_cdvd) {
       const auto& c = g_cdvd->stats();
@@ -363,6 +438,14 @@ int main(int argc, char** argv) {
   dmac.set_tag_sink(1, [&](const uint32_t* w, size_t n) { vif1.feed(w, n); });
   dmac.set_sink(2, [&](const uint8_t* q, uint32_t n) { gif_path3.process(q, n); });
   hw.set_dma_hook([&](int ch) { return dmac.run(ch); });
+  ps2::Ipu ipu(hw, [&mem](uint32_t addr, uint32_t size) { return mem->host(addr, size); });
+  hw.set_ipu(&ipu);
+  if (std::getenv("LANTERN_HW_TRACE")) {
+    mem->set_watch(0x1, 0x2, [](uint32_t, uint32_t, bool, unsigned) {});  // enables guest PC tracking
+    ee::Memory* memp = mem.get();
+    hw.set_pc_source([memp] { return memp->guest_pc; });
+  }
+  g_ipu = &ipu;
   g_gs = gs.get();
   g_vif1 = &vif1;
 
@@ -490,6 +573,36 @@ int main(int argc, char** argv) {
     }
   }
   kernel.set_sif(&sif);
+
+  // PLACEHOLDER: the FMV player (the disc's "sdr_driver" stream library, SID 0x80000701) asks the
+  // sound driver where its audio ring has been consumed to. That handshake is not emulated yet, so
+  // the guest's ring pump never releases the stream buffer: the demuxer then blocks on the audio
+  // track and the video track starves (the movie used to stop after 9001 macroblocks). Answer the
+  // position query with a value one 48 kHz/16-bit stereo frame (4096 bytes) ahead of the ring's own
+  // write position, which drains the ring at the nominal rate. The movie video plays; FMV audio is
+  // silent until the sound-driver stream path is implemented.
+  sif.set_rpc_intercept([&](const iop::RpcCall& call, std::vector<uint8_t>& reply) {
+    if (call.sid != 0x80000701 || (call.fno & 0xFFF0u) != 0x8100) return false;
+    auto read32 = [&](uint32_t a) {
+      const uint8_t* p = mem->host(a, 4);
+      uint32_t v = 0;
+      if (p) std::memcpy(&v, p, 4);
+      return v;
+    };
+    const uint32_t base = read32(0x1211dc0 + 0x44), size = read32(0x1211dc0 + 0x48), pos = read32(0x1211dc0 + 0x4c);
+    if (!size) return false;  // the player has not set up its stream buffer yet
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      log::warn("boot",
+                "PLACEHOLDER: FMV audio stream position is emulated (the sound-driver stream query "
+                "is not implemented); the movie plays but its audio is silent");
+    }
+    reply.assign(call.recv_size, 0);
+    const uint32_t ptr = base + ((pos + 0x1000u) % size);
+    std::memcpy(reply.data(), &ptr, 4);
+    return true;
+  });
 
   // Overlays (read-only from the disc) for overlay-window identification.
   ps2::OverlayTracker overlays;

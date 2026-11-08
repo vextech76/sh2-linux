@@ -1,10 +1,12 @@
 #include "ps2/hardware.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <format>
 
 #include "core/log.h"
 #include "gs/gs.h"
+#include "ps2/ipu.h"
 
 namespace lantern::ps2 {
 namespace {
@@ -69,7 +71,37 @@ void Hardware::set_sif_reg(uint32_t reg, uint32_t v) {
     sif_[reg] = v;
 }
 
+namespace {
+void hw_trace(const char* op, uint32_t a, uint32_t v, Ipu* ipu, uint32_t pc) {
+  static const bool on = std::getenv("LANTERN_HW_TRACE") != nullptr;
+  static int lines = 0;
+  static uint32_t last_a = 0, last_v = 0, repeats = 0;
+  static const uint64_t from_mb =
+      std::getenv("LANTERN_HW_TRACE") ? std::strtoull(std::getenv("LANTERN_HW_TRACE"), nullptr, 10) : 0;
+  if (!on || !ipu || ipu->stats().macroblocks < from_mb || lines > 3000) return;
+  if (!((a >= 0x10002000 && a < 0x10002040) || (a >= 0x1000B000 && a < 0x1000B500))) return;
+  if (op[0] == 'R' && (a == 0x10002000 || a == 0x10002004 || a == 0x10002010)) return;
+  if (a == last_a && v == last_v) {
+    ++repeats;
+    return;
+  }
+  if (repeats) log::info("hwtrace", "  (previous access repeated {} times)", repeats);
+  repeats = 0;
+  last_a = a;
+  last_v = v;
+  ++lines;
+  log::info("hwtrace", "{} 0x{:08x} = 0x{:08x} pc 0x{:08x}", op, a, v, pc);
+}
+}  // namespace
+
 uint32_t Hardware::read32(uint32_t a) {
+  ++all_reads_[a];
+  const uint32_t v = read32_impl(a);
+  hw_trace("R", a, v, ipu_, pc_source_ ? pc_source_() : 0);
+  return v;
+}
+
+uint32_t Hardware::read32_impl(uint32_t a) {
   if (a >= 0x10000000 && a < 0x10002000) {
     const int t = static_cast<int>((a - 0x10000000) / 0x800);
     switch (a & 0x7FF) {
@@ -87,8 +119,12 @@ uint32_t Hardware::read32(uint32_t a) {
       return (vblanks_ & 1 ? 1u << 13 : 0) | (0x1Bu << 16) | (0x55u << 24);  // FIELD, REV, ID
     default: break;
   }
+  if (ipu_ && Ipu::handles(a)) return ipu_->read32(a);
   for (int c = 0; c < kDmaChannels; ++c)
-    if (a == kDmaBase[c]) return regs_[a] & ~0x100u;  // CHCR: STR always clear (transfers are instant)
+    if (a == kDmaBase[c]) {
+      // CHCR.STR: clear for instant transfers, set while an asynchronous channel is running.
+      return (async_active_ & (1u << c)) ? (regs_[a] | 0x100u) : (regs_[a] & ~0x100u);
+    }
   if (gs_ && a >= 0x12000000 && a < 0x12002000) return gs_->read_priv32(a - 0x12000000);
   if (a >= 0x1000F200 && a < 0x1000F240) return sif_reg((a - 0x1000F200) / 0x10 + 1);  // MSCOM..SMFLG = 1..4
   auto& acc = unmodelled_[a];
@@ -97,6 +133,7 @@ uint32_t Hardware::read32(uint32_t a) {
 }
 
 void Hardware::write32(uint32_t a, uint32_t v) {
+  hw_trace("W", a, v, ipu_, pc_source_ ? pc_source_() : 0);
   if (a >= 0x10000000 && a < 0x10002000) {
     const int t = static_cast<int>((a - 0x10000000) / 0x800);
     switch (a & 0x7FF) {
@@ -121,9 +158,23 @@ void Hardware::write32(uint32_t a, uint32_t v) {
       return;
     default: break;
   }
+  if (ipu_ && Ipu::handles(a)) {
+    ipu_->write32(a, v);
+    return;
+  }
   for (int c = 0; c < kDmaChannels; ++c) {
     if (a != kDmaBase[c]) continue;
     regs_[a] = v;
+    if ((v & 0x100) && ipu_ && (c == 3 || c == 4)) {  // IPU_FROM / IPU_TO run asynchronously
+      ++dma_starts_[c];
+      async_active_ |= 1u << c;
+      ipu_->dma_started(c);
+      return;
+    }
+    if (!(v & 0x100) && (c == 3 || c == 4)) {  // guest stopped an IPU channel
+      async_active_ &= ~(1u << c);
+      if (ipu_) ipu_->dma_stopped(c);
+    }
     if (v & 0x100) {  // STR: transfer start
       const bool done = dma_hook_ && dma_hook_(c);
       if (dma_starts_[c]++ == 0 && !done)
@@ -182,6 +233,13 @@ void Hardware::write(uint32_t addr, const void* in, unsigned size) {
 }  // namespace lantern::ps2
 
 namespace lantern::ps2 {
+void Hardware::dma_done(int channel) {
+  if (!(async_active_ & (1u << channel))) return;
+  async_active_ &= ~(1u << channel);
+  regs_[kDmaBase[channel]] &= ~0x100u;
+  dmac_stat_ |= 1u << channel;
+  completed_dma_ |= 1u << channel;
+}
 bool Hardware::take_gs_interrupt() { return gs_ && gs_->take_interrupt(); }
 void Hardware::set_gs_imr(uint32_t imr) {
   if (gs_) gs_->set_imr(imr);

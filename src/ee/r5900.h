@@ -341,6 +341,9 @@ struct Insn {
 };
 
 Insn decode(uint32_t word, uint32_t pc);
+// Decoding for execution: like decode(), but accepts encodings the CPU executes although their
+// reserved fields are non-zero (see r5900.cpp). Disassembly and analysis keep using decode().
+Insn decode_exec(uint32_t word, uint32_t pc);
 std::string_view mnemonic(Op op);
 // GNU-objdump-like text (no aliases), e.g. "addiu sp,sp,-16". VU0 macro ops print a VU mnemonic.
 std::string disassemble(const Insn& insn);

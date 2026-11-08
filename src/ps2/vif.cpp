@@ -33,8 +33,12 @@ void Vif1::begin(uint32_t code) {
   switch (cmd_) {
     case 0x00: break;  // NOP
     case 0x01:         // STCYCL
+      // ASSUMPTION (undocumented edge case): a zero CL/WL behaves like 256, as an 8-bit cycle
+      // counter would. Only seen so far with misparsed VIF streams; keeps addressing defined.
       cl_ = imm_ & 0xFF;
       wl_ = (imm_ >> 8) & 0xFF;
+      if (cl_ == 0) cl_ = 256;
+      if (wl_ == 0) wl_ = 256;
       break;
     case 0x02: ofst_ = imm_ & 0x3FF; break;  // OFFSET
     case 0x03:                               // BASE

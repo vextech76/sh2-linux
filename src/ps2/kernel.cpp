@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <format>
 #include <thread>
 
@@ -360,6 +362,28 @@ void Kernel::deliver_due(double now) {
 void Kernel::safe_point(bool allow_switch) {
   if (in_interrupt_ || !current_) return;
   ++pc_histogram_[c_.pc];
+  if (const char* want = std::getenv("LANTERN_YIELD_CHAIN"); want && current_->id == std::atoi(want)) {
+    static uint64_t calls = 0;
+    if (++calls % 20000 == 0 && calls <= 200000) {
+      std::string chain;
+      const uint32_t sp0 = static_cast<uint32_t>(c_.r(29));
+      uint32_t found = 0;
+      for (uint32_t a = sp0; found < 16 && a < sp0 + 0x800; a += 4) {
+        const uint8_t* q = m_.host(a, 4);
+        if (!q) break;
+        uint32_t v;
+        std::memcpy(&v, q, 4);
+        if (v < 0x00100008 || v >= 0x003E6880 || (v & 3)) continue;
+        const uint32_t w = m_.read<uint32_t>(v - 8);
+        if ((w >> 26) == 3 || ((w >> 26) == 0 && (w & 0x3F) == 9)) {
+          chain += std::format(" 0x{:08x}", v);
+          ++found;
+        }
+      }
+      log::info(kSub, "sample #{} thread {} pc=0x{:08x} ra=0x{:08x}:{}", calls, current_->id, c_.pc, c_.gpr[31].u32[0],
+                chain);
+    }
+  }
   deliver_due(now());
   if (allow_switch && resched_pending_) {
     resched_pending_ = false;

@@ -122,6 +122,15 @@ void SifHle::handle_command(uint32_t a) {
         log::debug(kSub, "RPC {} fn {} send {} recv {} buff 0x{:x} args {} |{}|", server_name(sid), fno, send_size,
                    recv_size, buff, hex, txt);
       }
+      if (intercept_ && intercept_(call, call.result)) {
+        ++stats_.intercepted_calls;
+        if (receive && recv_size) {
+          call.result.resize(recv_size);
+          for (uint32_t i = 0; i < recv_size; ++i) ee_.write<uint8_t>(receive + i, call.result[i]);
+        }
+        rpc_end(a, kRpcCall, server, buff);
+        return;
+      }
       if (const RpcServerInfo* real = iop_ ? iop_->find_rpc(sid) : nullptr) {
         // The fake-services RAM is private; copy the EE's send buffer into the real runtime's
         // server buffer before invoking the guest server.
