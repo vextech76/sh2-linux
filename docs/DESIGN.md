@@ -474,8 +474,28 @@ path is implemented (LAN-12, LAN-44).
 The decoder also exports a compact stall summary (`describe()`, `LANTERN_IPU_SUMMARY`) that names
 the macroblock, block, coded-block-pattern and bit position where a `BDEC` ran out of input.
 
-Not yet: a real IOP interrupt context, VU1 execution, and verified audio output with keyed-on
-voices. LAN-38, LAN-40 and the Stage 8/10 items.
+### 9.8 VU1 micro-mode interpreter 🟡 (opt-in)
+
+`src/ps2/vu.*` implements the VU1 micro instruction set from the documented 64-bit encoding:
+upper FMAC (ADD/SUB/MADD/MSUB/MUL/MAX/MINI, component-wise, broadcast and ACC forms), OPMSUB,
+OPMULA, ITOF*/FTOI*, ABS, CLIP and NOP; lower loads/stores (LQ/SQ/LQD/SQD/LQI/SQI,
+ILW/ISW/ILWR/ISWR), integer arithmetic, MOVE/MR32/MFIR/MTIR, DIV/SQRT/RSQRT, the R register,
+XTOP/XITOP/XGKICK, the EFU functions, the FC/FS/FM flag instructions, branches with delay slots
+and the I/E bits. MAC/status/clip flags follow the documented rules (denormal flush, overflow
+clamp to the largest finite value, sticky status bits). `XGKICK` walks the GIF packet tags
+(`gs::gif_packet_qwords`) and feeds GIF PATH1.
+
+The EE's VU1 windows (`0x11008000` micro, `0x1100C000` data) are routed to the same memory the VIF1
+uploads use, so runtime microcode patches are visible.
+
+Status: unit-tested (arithmetic, LQ/SQ, branch delay, E-bit, illegal encoding) and it executes the
+game's microprograms, but the game's larger programs still walk into constant tables, i.e. one of
+the branch/flag semantics differs from the hardware. Because of that the interpreter is opt-in
+(`LANTERN_VU1`) and the default path is unchanged. Illegal encodings stop the microprogram (the
+hardware trap) rather than executing garbage.
+
+Not yet: a real IOP interrupt context, complete VU1 coverage, VU0/VIF0, and verified audio output
+with keyed-on voices. LAN-38, LAN-40, LAN-45..47 and the Stage 8/10 items.
 
 ## 9. Known limitations / risks
 
